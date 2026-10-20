@@ -34,6 +34,8 @@
   --topbar:       var(--surface);
   --accent:       var(--primary);
   --accent-soft:  var(--primary-soft);
+  --apply:        var(--primary);
+  --apply-soft:   var(--primary-soft);
   --purple:       var(--jade);
   --purple-soft:  var(--jade-bg);
   --green:        var(--ok);
@@ -51,46 +53,48 @@
   --list-w:       320px;
 }
 
-/* ── Dark Tokens ────────────────────────────────────────────────────────────── */
+/* ── Dark Tokens (Near-monochrome charcoal palette) ─────────────────────────── */
 [data-theme="dark"] {
-  --bg:           #0E1020;
-  --surface:      #171A2E;
-  --surface2:     #20243D;
-  --line:         #2A2F4D;
-  --ink:          #ECEEFA;
-  --muted:        #9AA1C2;
-  --primary:      #8A8EFF;
-  --on-primary:   #0E1020;
-  --primary-soft: #26295C;
-  --bubble-in:    #1B1F3A;
-  --bubble-out:   #333890;
-  --coin-bg:      #3A2D0C;
-  --coin-fg:      #FFD166;
-  --coin-line:    #6B5116;
-  --ok:           #5BE0A0;
-  --ok-bg:        #123A29;
-  --warn:         #FFB84D;
-  --warn-bg:      #3D2B0C;
-  --bad:          #FF8A8F;
-  --bad-bg:       #43181B;
+  --bg:           #0f0f11;
+  --surface:      #18181b;
+  --surface2:     #222226;
+  --line:         rgba(255, 255, 255, 0.08);
+  --ink:          #ededed;
+  --muted:        #a1a1aa;
+  --primary:      #e3a63a;
+  --on-primary:   #0f0f11;
+  --primary-soft: rgba(227, 166, 58, 0.14);
+  --apply:        #38bdf8;
+  --apply-soft:   rgba(56, 189, 248, 0.14);
+  --bubble-in:    #19191d;
+  --bubble-out:   #232328;
+  --coin-bg:      rgba(227, 166, 58, 0.12);
+  --coin-fg:      #f6c453;
+  --coin-line:    rgba(227, 166, 58, 0.35);
+  --ok:           #4ade80;
+  --ok-bg:        rgba(74, 222, 128, 0.12);
+  --warn:         #f59e0b;
+  --warn-bg:      rgba(245, 158, 11, 0.12);
+  --bad:          #f87171;
+  --bad-bg:       rgba(248, 113, 113, 0.12);
   --jade:         #45D9CB;
-  --jade-bg:      #11393A;
+  --jade-bg:      rgba(69, 217, 203, 0.12);
 
   /* Aliases & Design mappings */
   --text:         var(--ink);
   --border:       var(--line);
-  --input:        var(--surface2);
-  --rail:         var(--surface);
-  --topbar:       var(--surface);
+  --input:        #1a1a1e;
+  --rail:         #121215;
+  --topbar:       #141417;
   --accent:       var(--primary);
   --accent-soft:  var(--primary-soft);
   --purple:       var(--jade);
   --purple-soft:  var(--jade-bg);
   --green:        var(--ok);
   --green-bg:     var(--ok-bg);
-  --neutral-chip: var(--surface2);
-  --shadow:       0 1px 4px rgba(0, 0, 0, 0.3);
-  --shadow-lg:    0 10px 30px rgba(0, 0, 0, 0.5);
+  --neutral-chip: #222226;
+  --shadow:       0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-lg:    0 10px 30px rgba(0, 0, 0, 0.6);
 }
 
 /* ── Reset & Base ───────────────────────────────────────────────────────────── */
@@ -479,6 +483,40 @@ input, textarea, select { font-family: inherit; color: var(--text); }
   color: var(--primary);
 }
 
+/* ── Dark Theme Neutral Treatments (No Indigo/Purple) ───────────────────────── */
+[data-theme="dark"] .badge-accent,
+[data-theme="dark"] .badge-neutral {
+  background: #27272b;
+  color: #ededed;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+[data-theme="dark"] .list-row.selected .badge-accent {
+  background: #323238;
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+[data-theme="dark"] .rail-badge,
+[data-theme="dark"] .topbar-badge {
+  background: #2b2b31;
+  color: #ededed;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .avatar,
+[data-theme="dark"] .avatar-primary,
+[data-theme="dark"] .avatar-jade,
+[data-theme="dark"] .avatar-amber,
+[data-theme="dark"] .avatar-purple {
+  background: #242429;
+  color: #ededed;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+[data-theme="dark"] .avatar-circle {
+  background: #242429;
+  color: #ededed;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 /* ── Inputs ─────────────────────────────────────────────────────────────────── */
 .input {
   width: 100%;
@@ -546,6 +584,30 @@ textarea.input { resize: none; }
 .btn-ghost:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .btn-danger { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad); }
 .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+
+.btn-apply {
+  background: var(--apply);
+  color: #ffffff;
+  font-weight: 700;
+}
+[data-theme="dark"] .btn-apply {
+  color: #0c1017;
+}
+.btn-apply:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+#job-apply-now-btn {
+  background: var(--apply);
+  color: #ffffff;
+  font-weight: 700;
+}
+[data-theme="dark"] #job-apply-now-btn {
+  color: #0c1017;
+}
+#job-apply-now-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
 
 .btn-round {
   width: 40px; height: 40px;
@@ -632,6 +694,10 @@ textarea.input { resize: none; }
   font-weight: 700;
   color: var(--primary);
 }
+[data-theme="dark"] .bubble-handle {
+  color: #d4d4d8;
+  font-weight: 600;
+}
 .bubble-time {
   font-size: 11px;
   color: var(--muted);
@@ -673,10 +739,19 @@ textarea.input { resize: none; }
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: var(--primary);
+  color: var(--apply);
   font-weight: 600;
+  transition: opacity 0.15s, filter 0.15s;
 }
-.bubble-footer-link svg { width: 14px; height: 14px; }
+.bubble-footer-link:hover {
+  filter: brightness(1.15);
+  text-decoration: underline;
+}
+.bubble-footer-link svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+}
 .bubble-footer-meta { font-size: 11px; color: var(--muted); }
 
 /* Staff Post Moderation Action */
@@ -771,6 +846,24 @@ textarea.input { resize: none; }
   font-weight: 600;
   color: var(--primary);
   pointer-events: none;
+}
+#composer-form-link, .link-utility {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+[data-theme="dark"] #composer-form-link,
+[data-theme="dark"] .link-utility {
+  color: var(--muted);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+[data-theme="dark"] #composer-form-link:hover,
+[data-theme="dark"] .link-utility:hover {
+  color: var(--text);
 }
 .chat-composer {
   padding: 12px 20px;

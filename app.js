@@ -1444,7 +1444,7 @@ function renderNormalGroupFeed(pane, gid) {
       <button class="btn-round" id="composer-send-btn" aria-label="Send job posting">${ICONS.send}</button>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-top:2px">
-      <a href="#" id="composer-form-link" style="color:var(--primary);font-weight:600">Use the form instead</a>
+      <a href="#" id="composer-form-link" class="link-utility">Use the form instead</a>
       <span class="text-muted text-xs">Cost: 1 coin</span>
     </div>
   </div>`;
@@ -1652,7 +1652,7 @@ function applyToJob(jid) {
         {
           id: 'submit',
           label: 'Submit application',
-          cls: 'btn-primary',
+          cls: 'btn-apply',
           fn: () => {
             const fileId = document.getElementById('apply-file-select')?.value || null;
             const newApp = {
@@ -1882,7 +1882,7 @@ function renderJobDetail(pane, jid) {
       ` : existingApp ? `
         <span class="badge badge-green">Applied (${existingApp.status})</span>
       ` : `
-        <button class="btn btn-primary" id="job-apply-now-btn" style="padding:10px 24px">Apply now</button>
+        <button class="btn btn-apply" id="job-apply-now-btn" style="padding:10px 24px">Apply now</button>
       `}
     </div>
   </div>`;
