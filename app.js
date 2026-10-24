@@ -1370,9 +1370,13 @@ function handleHashRoute() {
       } else {
         selectedTrainingId = null;
       }
+      if (route === 'jobs') staffSelectedJobId = null;
+      if (route === 'groups') staffSelectedGroupId = null;
     } else {
       staffSubTab = 'overview';
       selectedTrainingId = null;
+      staffSelectedJobId = null;
+      staffSelectedGroupId = null;
     }
     currentView = staffSubTab;
   } else {
@@ -1386,6 +1390,9 @@ function handleHashRoute() {
     } else if (route === 'jobs') {
       currentView = 'jobs';
       selectedTrainingId = null;
+      selectedJobId = null;
+      selectedAppId = null;
+      selectedPostingId = null;
       if (param && ['browse', 'applied', 'posted'].includes(param)) {
         jobsSegment = param;
       }
@@ -1395,12 +1402,16 @@ function handleHashRoute() {
     } else if (route === 'groups') {
       currentView = 'groups';
       selectedTrainingId = null;
+      selectedGroupId = null;
+      staffSelectedGroupId = null;
     } else if (route === 'drive') {
       currentView = 'drive';
       selectedTrainingId = null;
     } else if (route === 'staff') {
       currentView = 'staff';
       selectedTrainingId = null;
+      staffSelectedGroupId = null;
+      staffSelectedJobId = null;
       if (param) staffSubTab = param;
     } else if (['overview', 'audit', 'users', 'roles', 'coins'].includes(route)) {
       if (isAdmin(user)) {
@@ -2498,6 +2509,14 @@ function renderUserApp(app) {
       if (targetView === 'trainings') {
         selectedTrainingId = null;
       }
+      if (targetView === 'jobs') {
+        selectedJobId = null;
+        selectedAppId = null;
+        selectedPostingId = null;
+      }
+      if (targetView === 'groups') {
+        selectedGroupId = null;
+      }
       navigateTo('#/' + targetView);
     });
   });
@@ -2627,6 +2646,12 @@ function renderSuperAdminApp(app) {
       if (targetView === 'trainings') {
         selectedTrainingId = null;
       }
+      if (targetView === 'jobs') {
+        staffSelectedJobId = null;
+      }
+      if (targetView === 'groups') {
+        staffSelectedGroupId = null;
+      }
       navigateTo('#/' + targetView);
     });
   });
@@ -2727,9 +2752,6 @@ function toggleNotificationsSlideover() {
 // ═══════════════════════════════════════════════════════════════════════════════
 function renderGroupsView(main) {
   const groups = STATE.groups || [];
-  if (!selectedGroupId && groups.length > 0) {
-    selectedGroupId = groups[0].id;
-  }
 
   const listRows = groups.map(g => {
     const isSelected = (g.id === selectedGroupId);
@@ -2867,7 +2889,10 @@ function renderNormalGroupFeed(pane, gid) {
   if (feedEl) feedEl.scrollTop = feedEl.scrollHeight;
 
   document.getElementById('group-feed-back')?.addEventListener('click', () => {
+    selectedGroupId = null;
     pane.classList.remove('open');
+    document.querySelectorAll('#groups-detail-pane').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.list-row.selected').forEach(r => r.classList.remove('selected'));
   });
 
   pane.querySelectorAll('.apply-link').forEach(link => {
@@ -3192,9 +3217,7 @@ function renderJobsView(main) {
     return true;
   }).sort((a, b) => b.createdAt - a.createdAt);
 
-  if (!selectedJobId && filtered.length > 0) {
-    selectedJobId = filtered[0].id;
-  }
+  // No auto-selection: show list first on mobile and empty placeholder on desktop
 
   const listRows = filtered.map(j => {
     const isSelected = (j.id === selectedJobId);
@@ -3331,7 +3354,10 @@ function renderJobDetail(pane, jid) {
   </div>`;
 
   document.getElementById('job-detail-back')?.addEventListener('click', () => {
+    selectedJobId = null;
     pane.classList.remove('open');
+    document.querySelectorAll('#jobs-detail-pane').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.list-row.selected').forEach(r => r.classList.remove('selected'));
   });
 
   document.getElementById('job-apply-now-btn')?.addEventListener('click', () => {
@@ -3355,9 +3381,7 @@ function renderMyPostingsView(main) {
     .filter(j => j.posterId === user.id && !j.removed)
     .sort((a, b) => b.createdAt - a.createdAt);
 
-  if (!selectedPostingId && postings.length > 0) {
-    selectedPostingId = postings[0].id;
-  }
+  // No auto-selection: show list first on mobile and empty placeholder on desktop
 
   const listRows = postings.map(j => {
     const isSelected = (j.id === selectedPostingId);
@@ -3489,7 +3513,10 @@ function renderPostingDetail(pane, pid) {
   </div>`;
 
   document.getElementById('posting-detail-back')?.addEventListener('click', () => {
+    selectedPostingId = null;
     pane.classList.remove('open');
+    document.querySelectorAll('#postings-detail-pane').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.list-row.selected').forEach(r => r.classList.remove('selected'));
   });
 
   pane.querySelectorAll('.accept-app-btn').forEach(btn => {
@@ -3596,9 +3623,7 @@ function renderMyApplicationsView(main) {
     .filter(a => a.applicantId === user.id)
     .sort((a, b) => b.appliedAt - a.appliedAt);
 
-  if (!selectedAppId && myApps.length > 0) {
-    selectedAppId = myApps[0].id;
-  }
+  // No auto-selection: show list first on mobile and empty placeholder on desktop
 
   const listRows = myApps.map(a => {
     const isSelected = (a.id === selectedAppId);
@@ -3697,7 +3722,10 @@ function renderApplicationDetail(pane, aid) {
   </div>`;
 
   document.getElementById('app-detail-back')?.addEventListener('click', () => {
+    selectedAppId = null;
     pane.classList.remove('open');
+    document.querySelectorAll('#app-detail-pane').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.list-row.selected').forEach(r => r.classList.remove('selected'));
   });
 
   document.getElementById('withdraw-app-btn')?.addEventListener('click', () => {
@@ -4024,6 +4052,8 @@ function renderAdminStaffView(main) {
         return;
       }
       staffSubTab = sub;
+      staffSelectedGroupId = null;
+      staffSelectedJobId = null;
       renderAdminStaffView(main);
     });
   });
@@ -4296,10 +4326,6 @@ function renderStaffJobsView(mount) {
     return true;
   });
 
-  if (!staffSelectedJobId && filtered.length > 0) {
-    staffSelectedJobId = filtered[0].id;
-  }
-
   // Selected job detail
   const selectedJob = filtered.find(j => j.id === staffSelectedJobId);
   let detailHtml = '';
@@ -4394,7 +4420,12 @@ function renderStaffJobsView(mount) {
     </div>
 
     <!-- Detail Pane showing ONLY counts "N applied, M accepted" -->
-    ${detailHtml}
+    ${detailHtml || `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:32px 24px;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);text-align:center;min-height:220px">
+      <div style="margin-bottom:12px;opacity:0.6">${ICONS.briefcase}</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px">No job selected</div>
+      <div style="font-size:12px;max-width:280px">Select a job from the table to view details, applicant counts, and moderation actions.</div>
+    </div>`}
   </div>`;
 
   document.getElementById('staff-job-search')?.addEventListener('input', (e) => {
@@ -4939,6 +4970,9 @@ function renderJobsContainerView(main) {
   main.querySelectorAll('.jobs-segment-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       jobsSegment = btn.dataset.segment;
+      selectedJobId = null;
+      selectedAppId = null;
+      selectedPostingId = null;
       navigateTo('#/jobs/' + jobsSegment);
     });
   });
