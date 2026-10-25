@@ -1,3 +1,6 @@
+// Clear legacy saved keys at startup so an old browser does not keep ghost users
+['ht_state', 'ht_current_user', 'ht_view'].forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
+
 /* ── HireTrainers Application ───────────────────────────────────────────────── */
 'use strict';
 
@@ -70,247 +73,17 @@ function makeTrainerAvatarSvg(initials, bg = '#1e293b', fg = '#94a3b8') {
 
 // ── Pre-kept Seed Accounts ───────────────────────────────────────────────────
 const SEED = {
-  users: [
-    {
-      id: 'u1',
-      handle: 'user-0873',
-      displayName: 'Demo User',
-      email: 'demo@hiretrainers.app',
-      passwordHash: 'demo1234',
-      coins: 50,
-      verified: false,
-      kycVerified: false,
-      role: 'user',
-      photo: null,
-      createdAt: Date.now() - 7 * 86400000
-    },
-    {
-      id: 'u_admin',
-      handle: 'user-admin',
-      displayName: 'Staff Admin',
-      email: 'admin@hiretrainers.in',
-      passwordHash: 'admin',
-      coins: 50,
-      verified: true,
-      kycVerified: true,
-      role: 'admin',
-      photo: null,
-      createdAt: Date.now() - 10 * 86400000
-    },
-    {
-      id: 'u_superadmin',
-      handle: 'user-superadmin',
-      displayName: 'Super Admin',
-      email: 'superadmin@hiretrainers.in',
-      passwordHash: 'superadmin',
-      coins: 0,
-      verified: true,
-      kycVerified: true,
-      role: 'super-admin',
-      photo: null,
-      createdAt: Date.now() - 20 * 86400000
-    },
-    {
-      id: 'u2',
-      handle: 'user-4421',
-      displayName: 'Alex K',
-      email: 'alex@example.com',
-      passwordHash: 'alex1234',
-      coins: 30,
-      verified: true,
-      role: 'user',
-      photo: null,
-      createdAt: Date.now() - 14 * 86400000
-    },
-    {
-      id: 'u3',
-      handle: 'user-0210',
-      displayName: 'Priya M',
-      email: 'priya@example.com',
-      passwordHash: 'priya123',
-      coins: 20,
-      verified: true,
-      role: 'user',
-      photo: null,
-      createdAt: Date.now() - 10 * 86400000
-    },
-    {
-      id: 'u4',
-      handle: 'user-7731',
-      displayName: 'Sam R',
-      email: 'sam@example.com',
-      passwordHash: 'sam12345',
-      coins: 15,
-      verified: true,
-      role: 'user',
-      photo: null,
-      createdAt: Date.now() - 5 * 86400000
-    },
-  ],
+  users: [],
   groups: [
     { id: 'g1', name: 'Technical',     type: 'technical' },
     { id: 'g2', name: 'Non-Technical', type: 'non-technical' },
   ],
-  jobs: [
-    {
-      id: 'j1',
-      posterId: 'u2',
-      groupId: 'g1',
-      title: 'React Native Trainer',
-      location: 'Remote',
-      skills: ['React Native', 'Firebase'],
-      spotsTotal: 3,
-      spotsFilled: 2,
-      postType: 'form',
-      template: '',
-      pay: '',
-      endDate: '',
-      createdAt: Date.now() - 2 * 3600000,
-      lastActivity: Date.now() - 2 * 3600000,
-      closed: false,
-      removed: false
-    },
-    {
-      id: 'j2',
-      posterId: 'u2',
-      groupId: 'g1',
-      title: 'Deep Learning Trainer',
-      location: 'Kalyan, Mumbai',
-      skills: ['ANN', 'CNN', 'RNN', 'Docker', 'AWS'],
-      spotsTotal: 3,
-      spotsFilled: 1,
-      postType: 'template',
-      template: 'NITHMINDS PRIVATE LIMITED is hiring...\nExp: 5+ years · Offline · Kalyan\nSkills: ANN, CNN, RNN, Docker, AWS...',
-      pay: '',
-      endDate: '',
-      createdAt: Date.now() - 5 * 3600000,
-      lastActivity: Date.now() - 5 * 3600000,
-      closed: false,
-      removed: false
-    },
-    {
-      id: 'j3',
-      posterId: 'u3',
-      groupId: 'g2',
-      title: 'Soft Skills Workshop',
-      location: 'Remote',
-      skills: ['Communication', 'Leadership'],
-      spotsTotal: 1,
-      spotsFilled: 1,
-      postType: 'form',
-      template: '',
-      pay: '₹500/session',
-      endDate: '',
-      createdAt: Date.now() - 5 * 3600000,
-      lastActivity: Date.now() - 5 * 3600000,
-      closed: false,
-      removed: false
-    },
-    {
-      id: 'j4',
-      posterId: 'u2',
-      groupId: 'g1',
-      title: 'Python Bootcamp Lead',
-      location: 'Chennai',
-      skills: ['Python', 'NumPy', 'Pandas'],
-      spotsTotal: 2,
-      spotsFilled: 0,
-      postType: 'form',
-      template: '',
-      pay: '',
-      endDate: '',
-      createdAt: Date.now() - 5 * 3600000,
-      lastActivity: Date.now() - 5 * 3600000,
-      closed: false,
-      removed: false
-    },
-    {
-      id: 'j5',
-      posterId: 'u2',
-      groupId: 'g1',
-      title: 'Cloud Fundamentals',
-      location: 'Remote',
-      skills: ['AWS', 'Azure', 'GCP'],
-      spotsTotal: 3,
-      spotsFilled: 1,
-      postType: 'form',
-      template: '',
-      pay: '',
-      endDate: '',
-      createdAt: Date.now() - 86400000,
-      lastActivity: Date.now() - 86400000,
-      closed: false,
-      removed: false
-    },
-    {
-      id: 'j6',
-      posterId: 'u2',
-      groupId: 'g1',
-      title: 'Data Structures Crash Course',
-      location: 'Remote',
-      skills: ['Algorithms', 'Data Structures'],
-      spotsTotal: 1,
-      spotsFilled: 0,
-      postType: 'form',
-      template: '',
-      pay: '',
-      endDate: '',
-      createdAt: Date.now() - 2 * 86400000,
-      lastActivity: Date.now() - 2 * 86400000,
-      closed: false,
-      removed: false
-    },
-  ],
-  applications: [
-    {
-      id: 'a1', jobId: 'j1', applicantId: 'u1', status: 'Under review',
-      fileId: 'f1', appliedAt: Date.now() - 2 * 86400000, lastActivity: Date.now() - 2 * 86400000, seenByPoster: false
-    },
-    {
-      id: 'a2', jobId: 'j3', applicantId: 'u1', status: 'Accepted',
-      fileId: 'f1', appliedAt: Date.now() - 5 * 86400000, lastActivity: Date.now() - 5 * 86400000, seenByPoster: true
-    },
-    {
-      id: 'a3', jobId: 'j5', applicantId: 'u1', status: REJECTED_LABEL,
-      fileId: 'f2', appliedAt: Date.now() - 7 * 86400000, lastActivity: Date.now() - 7 * 86400000, seenByPoster: true
-    },
-    {
-      id: 'a4', jobId: 'j1', applicantId: 'u3', status: 'Under review',
-      fileId: 'f1', appliedAt: Date.now() - 1 * 86400000, lastActivity: Date.now() - 1 * 86400000, seenByPoster: false
-    },
-    {
-      id: 'a5', jobId: 'j1', applicantId: 'u4', status: 'Under review',
-      fileId: null, appliedAt: Date.now() - 3 * 3600000, lastActivity: Date.now() - 3 * 3600000, seenByPoster: false
-    },
-    {
-      id: 'a6', jobId: 'j4', applicantId: 'u3', status: 'Under review',
-      fileId: 'f1', appliedAt: Date.now() - 12 * 3600000, lastActivity: Date.now() - 12 * 3600000, seenByPoster: false
-    },
-    {
-      id: 'a7', jobId: 'j4', applicantId: 'u4', status: 'Under review',
-      fileId: null, appliedAt: Date.now() - 6 * 3600000, lastActivity: Date.now() - 6 * 3600000, seenByPoster: false
-    },
-  ],
-  driveFiles: [
-    { id: 'f1', ownerId: 'u1', name: 'resume_2026.pdf', size: 240 * 1024, createdAt: Date.now() - 10 * 86400000, hidden: false },
-    { id: 'f2', ownerId: 'u1', name: 'portfolio.pdf', size: 1.1 * 1024 * 1024, createdAt: Date.now() - 8 * 86400000, hidden: false },
-  ],
-  messages: [
-    { id: 'm1', jobId: 'j1', applicationId: 'a1', senderId: 'u2', text: 'Hi! Thanks for applying. Can you share your experience with React Native navigation?', sentAt: Date.now() - 1 * 86400000 },
-    { id: 'm2', jobId: 'j1', applicationId: 'a1', senderId: 'u1', text: 'Sure! I have 3 years of experience with React Navigation and React Native Screens.', sentAt: Date.now() - 23 * 3600000 },
-  ],
-  notifications: [
-    { id: 'n1', userId: 'u1', text: 'Your application to "React Native Trainer" is under review.', read: false, createdAt: Date.now() - 2 * 86400000 },
-    { id: 'n2', userId: 'u1', text: 'Congratulations! Your application to "Soft Skills Workshop" was accepted.', read: true, createdAt: Date.now() - 5 * 86400000 },
-    { id: 'n3', userId: 'u1', text: 'Your application to "Cloud Fundamentals" was rejected.', read: true, createdAt: Date.now() - 7 * 86400000 },
-    { id: 'n4', userId: 'u2', text: 'user-0873 applied to your posting "React Native Trainer".', read: false, createdAt: Date.now() - 2 * 86400000 },
-  ],
-  ledger: [
-    { id: 'l1', userId: 'u1', type: 'bonus', amount: 50, note: 'Welcome bonus', at: Date.now() - 7 * 86400000 },
-    { id: 'l2', userId: 'u1', type: 'spend', amount: -1, note: 'Post: React Native Trainer (group)', at: Date.now() - 3 * 86400000 },
-    { id: 'l3', userId: 'u1', type: 'spend', amount: -1, note: 'Post: Python Bootcamp Lead', at: Date.now() - 2 * 86400000 },
-    { id: 'l4', userId: 'u1', type: 'spend', amount: -1, note: 'Post: Cloud Fundamentals', at: Date.now() - 1 * 86400000 },
-  ],
+  jobs: [],
+  applications: [],
+  driveFiles: [],
+  messages: [],
+  notifications: [],
+  ledger: [],
   pendingActions: [],
   
   trainings: [
@@ -351,7 +124,7 @@ const SEED = {
       enrolBy: '2026-11-07',
       refundPolicy: 'Full refund if requested at least 48 hours before Session 1. Recordings provided for all live sessions.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     },
     {
       id: 't2',
@@ -388,7 +161,7 @@ const SEED = {
       enrolBy: '2026-11-11',
       refundPolicy: 'Full refund eligible up to 48 hours before commencement. All session notebooks included.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     },
     {
       id: 't3',
@@ -424,7 +197,7 @@ const SEED = {
       enrolBy: '2026-11-15',
       refundPolicy: 'Free enrolment. Access to live sessions and community Q&A.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     },
     {
       id: 't4',
@@ -458,7 +231,7 @@ const SEED = {
       enrolBy: '2026-11-08',
       refundPolicy: 'Standard 48-hour refund policy before session kickoff.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     },
     {
       id: 't5',
@@ -493,7 +266,7 @@ const SEED = {
       enrolBy: '2026-11-12',
       refundPolicy: 'Full refund available up to 48 hours prior to live modules.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     },
     {
       id: 't6',
@@ -528,7 +301,7 @@ const SEED = {
       enrolBy: '2026-11-13',
       refundPolicy: 'Full refund eligible up to 48 hours before session 1 kickoff.',
       status: 'published',
-      createdBy: 'u_admin'
+      createdBy: null
     }
   ],
   privateLinks: {
@@ -539,16 +312,8 @@ const SEED = {
     t5: 'https://meet.google.com/k8s-mesh-workshop-live',
     t6: 'https://meet.google.com/spark-databricks-live'
   },
-  enrollments: {
-    // Seed demo user (u1) with one already-paid enrollment so My Learning is not empty on first login
-    t1_u1: {
-      status: 'paid',
-      paidAt: Date.now() - 2 * 86400000
-    }
-  },
-auditLog: [
-    { id: 'aud1', time: Date.now() - 2 * 86400000, who: 'superadmin@hiretrainers.in', action: 'seed_init', detail: 'System initialized' }
-  ]
+  enrollments: {},
+  auditLog: []
 };
 
 // ── Application State ─────────────────────────────────────────────────────────
@@ -580,28 +345,11 @@ let editingTrainingId = null;
 let postTrainingMode = 'form'; // form | paste
 
 
-// ── LocalStorage Helpers ──────────────────────────────────────────────────────
+// ── Storage Helpers (Memory-only, no localStorage persistence for users/sessions) ──
 function loadState() {
-  try {
-    const raw = localStorage.getItem('ht_state');
-    if (raw) {
-      STATE = JSON.parse(raw);
-      ensureSeedAccounts();
-    } else {
-      resetToSeed();
-    }
-  } catch(e) {
-    resetToSeed();
-  }
-
-  try {
-    currentUserId = localStorage.getItem('ht_current_user') || null;
-  } catch(e) { currentUserId = null; }
-
-  try {
-    const sv = localStorage.getItem('ht_view');
-    if (sv) currentView = sv;
-  } catch(e) {}
+  ['ht_state', 'ht_current_user', 'ht_view'].forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
+  resetToSeed();
+  currentUserId = null;
 }
 
 function ensureSeedAccounts() {
@@ -615,7 +363,6 @@ function ensureSeedAccounts() {
   if (!STATE.trainings || STATE.trainings.length === 0) {
     STATE.trainings = JSON.parse(JSON.stringify(SEED.trainings || []));
   } else {
-    // Clear out any old inline SVG data URLs to display the clean grey tile placeholder
     STATE.trainings.forEach(t => {
       if (t.trainer && t.trainer.photoUrl && t.trainer.photoUrl.startsWith('data:image/svg+xml')) {
         t.trainer.photoUrl = '';
@@ -625,62 +372,35 @@ function ensureSeedAccounts() {
   if (!STATE.privateLinks || Object.keys(STATE.privateLinks).length === 0) {
     STATE.privateLinks = JSON.parse(JSON.stringify(SEED.privateLinks || {}));
   }
-  if (!STATE.enrollments || Object.keys(STATE.enrollments).length === 0) {
-    STATE.enrollments = JSON.parse(JSON.stringify(SEED.enrollments || {}));
-  }
-
-
-  SEED.users.forEach(su => {
-    const existing = STATE.users.find(u => u.email.toLowerCase() === su.email.toLowerCase());
-    if (!existing) {
-      STATE.users.push(JSON.parse(JSON.stringify(su)));
-    } else {
-      if (su.role && !existing.role) existing.role = su.role;
-      if (su.role === 'admin' || su.role === 'super-admin') {
-        existing.role = su.role;
-        existing.verified = true;
-      }
-    }
-  });
-  saveState();
+  if (!STATE.enrollments) STATE.enrollments = {};
 }
 
 function resetToSeed() {
   STATE = JSON.parse(JSON.stringify(SEED));
-  saveState();
 }
 
 function saveState() {
-  try {
-    localStorage.setItem('ht_state', JSON.stringify(STATE));
-  } catch(e) {}
+  // Code saving registered users, passwords or sessions in localStorage deleted
 }
 
 function saveSelf() {
-  try {
-    if (currentUserId) localStorage.setItem('ht_current_user', currentUserId);
-    else localStorage.removeItem('ht_current_user');
-  } catch(e) {}
+  // Code saving sessions in localStorage deleted
 }
 
 function saveView() {
-  try {
-    localStorage.setItem('ht_view', currentView);
-  } catch(e) {}
+  // Code saving view in localStorage deleted
 }
 
 function resetDemo() {
-  localStorage.clear();
+  ['ht_state', 'ht_current_user', 'ht_view'].forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
   currentUserId = null;
   currentView = 'groups';
   staffSubTab = 'overview';
   resetToSeed();
-  initTheme();
   render();
-  toast('Demo reset to initial seed state', 'primary');
+  toast('Demo reset to initial state', 'primary');
 }
 
-// ── User & Role Helpers ───────────────────────────────────────────────────────
 function me() {
   if (!currentUserId) return null;
   return (STATE.users || []).find(u => u.id === currentUserId) || null;
@@ -1715,9 +1435,9 @@ function signUpHTML() {
 
 function googleCompleteHTML() {
   const profile = googleSignupProfile || {
-    name: 'Alex Rivera',
-    email: 'alex.trainer@gmail.com',
-    photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'
+    name: '',
+    email: '',
+    photo: ''
   };
 
   return `<div class="signup-shell">
@@ -1979,28 +1699,7 @@ function setupResumeDropzone(prefix) {
 }
 
 function handleGoogleDoor() {
-  const mockGoogle = {
-    displayName: 'Alex Rivera',
-    email: 'alex.trainer@gmail.com',
-    photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'
-  };
-
-  // Check if account already exists with complete profile
-  const existing = getUserByEmail(mockGoogle.email);
-  if (existing && existing.phone) {
-    currentUserId = existing.id;
-    currentView = 'groups';
-    saveSelf();
-    saveView();
-    toast(`Welcome back, ${existing.displayName}!`, 'success');
-    render();
-    return;
-  }
-
-  // Google does not supply phone number -> ask only for missing fields
-  googleSignupProfile = mockGoogle;
-  authScreen = 'google_complete';
-  renderAuthScreen();
+  showMsg('auth-msg', 'Sign-in is not connected yet.');
 }
 
 function attachAuthEvents() {
@@ -2051,19 +1750,13 @@ function attachAuthEvents() {
 
   // Prototype Quick Fill Buttons
   document.getElementById('qa-user')?.addEventListener('click', () => {
-    const e = document.getElementById('si-email');
-    const p = document.getElementById('si-pass');
-    if (e && p) { e.value = 'demo@hiretrainers.app'; p.value = 'demo1234'; }
+    showMsg('auth-msg', 'Sign-in is not connected yet.');
   });
   document.getElementById('qa-admin')?.addEventListener('click', () => {
-    const e = document.getElementById('si-email');
-    const p = document.getElementById('si-pass');
-    if (e && p) { e.value = 'admin@hiretrainers.in'; p.value = 'admin'; }
+    showMsg('auth-msg', 'Sign-in is not connected yet.');
   });
   document.getElementById('qa-super')?.addEventListener('click', () => {
-    const e = document.getElementById('si-email');
-    const p = document.getElementById('si-pass');
-    if (e && p) { e.value = 'superadmin@hiretrainers.in'; p.value = 'superadmin'; }
+    showMsg('auth-msg', 'Sign-in is not connected yet.');
   });
 
   // Google door triggers
@@ -2126,35 +1819,11 @@ function setLoading(btn, loading, defaultText) {
 }
 
 async function doSignIn() {
-  const email = document.getElementById('si-email')?.value.trim();
-  const pass  = document.getElementById('si-pass')?.value;
-  if (!email) { showMsg('auth-msg', 'Email is required'); return; }
-  if (!validateEmail(email)) { showMsg('auth-msg', 'Enter a valid email address'); return; }
-  if (!pass) { showMsg('auth-msg', 'Password is required'); return; }
-
   const btn = document.getElementById('si-btn');
   setLoading(btn, true, 'Sign in');
-  await fakeDelay(350);
-
-  const user = getUserByEmail(email);
-  if (!user || user.passwordHash !== pass) {
-    showMsg('auth-msg', 'Incorrect email or password');
-    setLoading(btn, false, 'Sign in');
-    return;
-  }
-
-  currentUserId = user.id;
-  saveSelf();
+  await fakeDelay(250);
   setLoading(btn, false, 'Sign in');
-
-  if (isSuperAdmin(user)) {
-    staffSubTab = 'overview';
-  } else {
-    currentView = 'groups';
-    saveView();
-  }
-
-  render();
+  showMsg('auth-msg', 'Sign-in is not connected yet.');
 }
 
 async function doSignUp() {
@@ -2273,11 +1942,8 @@ async function doSignUp() {
   });
   saveState();
 
-  // Signed-in user ready to browse
-  currentUserId = newUser.id;
-  currentView = 'groups';
-  saveSelf();
-  saveView();
+  // Real accounts will come from Firebase later - do not sign in
+  currentUserId = null;
 
   setLoading(btn, false, 'Create account');
 
@@ -2291,7 +1957,7 @@ async function doSignUp() {
 async function doGoogleFinish() {
   const name  = document.getElementById('gc-name')?.value.trim();
   const phone = document.getElementById('gc-phone')?.value.trim();
-  const email = googleSignupProfile?.email || 'alex.trainer@gmail.com';
+  const email = googleSignupProfile?.email || '';
 
   if (!name) {
     showMsg('auth-msg', 'Please enter your name');
@@ -2358,14 +2024,11 @@ async function doGoogleFinish() {
     signupResumeFile = null;
   }
 
-  saveState();
-  currentUserId = user.id;
-  currentView = 'groups';
-  saveSelf();
-  saveView();
+  currentUserId = null;
   setLoading(btn, false, 'Finish');
-  toast(`Welcome to HireTrainers, ${name}! 50 coins added to your wallet.`, 'success');
-  render();
+  authScreen = 'signin';
+  renderAuthScreen();
+  showMsg('auth-msg', 'Sign-in is not connected yet.');
 }
 
 async function doForgot() {
@@ -2391,9 +2054,9 @@ function doInboxContinue() {
     clearInterval(verifyResendTimer);
     verifyResendTimer = null;
   }
-  const user = me();
-  toast(`Welcome, ${user ? user.displayName : 'there'}! Explore groups and jobs freely.`, 'success');
-  render();
+  authScreen = 'signin';
+  renderAuthScreen();
+  showMsg('auth-msg', 'Sign-in is not connected yet.');
 }
 
 
@@ -7059,7 +6722,7 @@ function parseTrainingTemplate(text, user) {
     enrolBy: sessions[0]?.date || '2026-11-20',
     refundPolicy: refund,
     status: 'published',
-    createdBy: user?.id || 'u_admin'
+    createdBy: user?.id || null
   };
 
   return { errors: [], training, joinLink };
@@ -7087,78 +6750,42 @@ setInterval(() => {
 window.selfTest = async function() {
   console.log('%c[HireTrainers Self-Test] Starting Automated Suite...', 'font-weight:bold; font-size:14px; color:#f59e0b;');
   const results = [];
-  const origUserId = currentUserId;
-  const origStaffSubTab = staffSubTab;
-  const origView = currentView;
+  const origAuthScreen = authScreen;
 
-  const testAccount = async (email, expectedRole, screens) => {
-    console.log(`\n%cTesting Account: ${email} (${expectedRole})`, 'font-weight:bold; color:#3b82f6;');
-    const u = (STATE.users || []).find(x => x.email === email);
-    if (!u) {
-      console.error(`User not found: ${email}`);
-      results.push({ email, role: expectedRole, screen: 'login', status: 'FAIL', reason: 'User not found' });
-      return;
-    }
-    currentUserId = u.id;
-    saveSelf();
+  authScreen = 'signin';
+  renderAuthScreen();
+  await new Promise(r => setTimeout(r, 60));
 
-    for (const scr of screens) {
-      let isOk = false;
-      let errorMsg = '';
-      try {
-        if (expectedRole === 'super-admin') {
-          staffSubTab = scr;
-          currentView = scr;
-          selectedTrainingId = null;
-          renderSuperAdminApp(document.getElementById('app'));
-        } else {
-          if (scr === 'staff') {
-            currentView = 'staff';
-            staffSubTab = 'overview';
-            renderUserApp(document.getElementById('app'));
-          } else {
-            currentView = scr;
-            selectedTrainingId = null;
-            renderUserApp(document.getElementById('app'));
-          }
-        }
-        await new Promise(r => setTimeout(r, 60));
-        const main = document.getElementById('main-content');
-        const hasErrorCard = main?.querySelector('.error-card') || main?.innerText?.includes('failed to load');
-        if (!main) {
-          errorMsg = '#main-content not found';
-        } else if (main.innerHTML.trim().length === 0) {
-          errorMsg = 'Main content area is completely empty (0 bytes)';
-        } else if (hasErrorCard) {
-          errorMsg = 'Error card rendered on screen';
-        } else {
-          isOk = true;
-        }
-      } catch (err) {
-        errorMsg = err.message || String(err);
-      }
+  // Verify auth overlay renders sign-in page cleanly
+  const overlay = document.getElementById('auth-overlay');
+  const hasAuthCard = overlay && overlay.querySelector('.auth-card');
+  results.push({
+    test: 'Sign-in Screen Render',
+    status: hasAuthCard ? 'PASS' : 'FAIL',
+    reason: hasAuthCard ? 'Sign-in card rendered cleanly' : 'Sign-in card missing'
+  });
 
-      const status = isOk ? 'PASS' : 'FAIL';
-      results.push({ email, role: expectedRole, screen: scr, status, reason: errorMsg });
-      const badgeStyle = isOk ? 'color:#10b981; font-weight:bold;' : 'color:#ef4444; font-weight:bold;';
-      console.log(`  %c[${status}] %c${scr} %c${errorMsg ? `(${errorMsg})` : ''}`, badgeStyle, 'color:inherit; font-weight:600;', 'color:#9ca3af;');
-    }
-  };
+  // Verify no demo users remain in memory
+  const usersCount = (STATE.users || []).length;
+  results.push({
+    test: 'Demo Accounts Removed',
+    status: usersCount === 0 ? 'PASS' : 'FAIL',
+    reason: usersCount === 0 ? 'STATE.users is empty (0 demo accounts)' : `Found ${usersCount} users`
+  });
 
-  // 1. Normal User
-  await testAccount('demo@hiretrainers.app', 'user', ['groups', 'jobs', 'trainings', 'learning', 'drive', 'me']);
+  // Verify attempt to sign in shows "Sign-in is not connected yet."
+  await doSignIn();
+  const msgEl = document.getElementById('auth-msg');
+  const hasExpectedMsg = msgEl && msgEl.innerText.includes('Sign-in is not connected yet.');
+  results.push({
+    test: 'Sign-in Disconnected Notice',
+    status: hasExpectedMsg ? 'PASS' : 'FAIL',
+    reason: hasExpectedMsg ? 'Correct notice shown' : 'Notice missing or incorrect'
+  });
 
-  // 2. Admin
-  await testAccount('admin@hiretrainers.in', 'admin', ['groups', 'jobs', 'trainings', 'learning', 'drive', 'staff', 'me']);
-
-  // 3. Super Admin
-  await testAccount('superadmin@hiretrainers.in', 'super-admin', ['overview', 'groups', 'jobs', 'trainings', 'audit', 'users', 'roles', 'coins', 'me']);
-
-  // Restore previous session
-  currentUserId = origUserId;
-  staffSubTab = origStaffSubTab;
-  currentView = origView;
-  render();
+  // Restore screen
+  authScreen = origAuthScreen;
+  renderAuthScreen();
 
   const passed = results.filter(r => r.status === 'PASS').length;
   const failed = results.filter(r => r.status === 'FAIL').length;
