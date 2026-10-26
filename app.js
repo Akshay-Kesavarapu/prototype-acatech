@@ -64,9 +64,139 @@ const READ_NOTIFICATION_RETENTION_DAYS = 90;
 const UNREAD_NOTIFICATION_RETENTION_DAYS = 180;
 
 
+
+/* ===== Firebase Authentication Integration ===== */
+
+let firebaseGoogleUser = null;
+let firebaseAuthReadyPromise = null;
+
+async function getFirebaseAuthModules() {
+  if (!firebaseAuthReadyPromise) {
+    firebaseAuthReadyPromise = Promise.all([
+      import('./firebase.js'),
+      import('https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js')
+    ]).then(([config, api]) => ({ ...config, ...api }));
+  }
+
+  return firebaseAuthReadyPromise;
+}
+
+function friendlyFirebaseAuthError(error) {
+  const messages = {
+    'auth/invalid-email': 'Please enter a valid email address.',
+    'auth/invalid-credential': 'Incorrect email or password.',
+    'auth/user-not-found': 'No account found for this email.',
+    'auth/wrong-password': 'Incorrect email or password.',
+    'auth/email-already-in-use': 'This email already has an account.',
+    'auth/weak-password': 'Choose a stronger password.',
+    'auth/popup-closed-by-user': 'Google sign-in was cancelled.',
+    'auth/popup-blocked': 'Allow popups and try again.',
+    'auth/unauthorized-domain':
+      'Add this website domain in Firebase Authentication settings.',
+    'auth/network-request-failed':
+      'Check your internet connection and try again.',
+    'auth/too-many-requests':
+      'Too many attempts. Please wait and try again.'
+  };
+
+  return messages[error?.code] ||
+    error?.message ||
+    'Authentication failed. Please try again.';
+}
+
+function findFirebaseProfile(firebaseUser) {
+  if (!firebaseUser?.uid) return null;
+
+  return (STATE.users || []).find(
+    user => user.id === firebaseUser.uid
+  ) || null;
+}
+
+function ensureFirebaseProfile(firebaseUser, details = {}) {
+  if (!firebaseUser?.uid) {
+    throw new Error('Firebase returned an invalid user.');
+  }
+
+  if (!STATE.users) STATE.users = [];
+
+  let user = findFirebaseProfile(firebaseUser);
+
+  if (!user) {
+    user = {
+      id: firebaseUser.uid,
+      handle: 'user-' + Math.floor(1000 + Math.random() * 9000),
+      displayName:
+        details.name ||
+        firebaseUser.displayName ||
+        (firebaseUser.email || 'New user').split('@')[0],
+      email: (firebaseUser.email || '').toLowerCase(),
+      authProvider: firebaseUser.providerData?.some(
+        provider => provider.providerId === 'google.com'
+      ) ? 'firebase-google' : 'firebase-password',
+      phone: details.phone || firebaseUser.phoneNumber || '',
+      coins: COIN_NEW_USER,
+      verified: !!firebaseUser.emailVerified,
+      kycVerified: false,
+      role: 'user',
+      photo: firebaseUser.photoURL || details.photo || null,
+      createdAt: Date.now()
+    };
+
+    STATE.users.push(user);
+
+    if (!STATE.ledger) STATE.ledger = [];
+
+    STATE.ledger.push({
+      id: uid(),
+      userId: user.id,
+      type: 'bonus',
+      amount: COIN_NEW_USER,
+      note: 'Welcome bonus',
+      at: Date.now()
+    });
+  } else {
+    user.email = (firebaseUser.email || user.email || '').toLowerCase();
+    user.displayName =
+      details.name || firebaseUser.displayName || user.displayName;
+
+    if (details.phone) user.phone = details.phone;
+
+    if (firebaseUser.photoURL || details.photo) {
+      user.photo = firebaseUser.photoURL || details.photo;
+    }
+
+    user.verified = !!firebaseUser.emailVerified || user.verified;
+
+  }
+
+  saveState();
+  return { user };
+}
+
+
 function makeTrainerAvatarSvg(initials, bg = '#1e293b', fg = '#94a3b8') {
   return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="100%" height="100%" fill="${encodeURIComponent(bg)}"/><circle cx="200" cy="180" r="70" fill="none" stroke="${encodeURIComponent(fg)}" stroke-width="6" opacity="0.4"/><path d="M120 380 C120 290 280 290 280 380" fill="none" stroke="${encodeURIComponent(fg)}" stroke-width="6" opacity="0.4"/><text x="50%" y="270" font-family="system-ui,-apple-system,sans-serif" font-size="72" font-weight="700" fill="${encodeURIComponent(fg)}" text-anchor="middle" dominant-baseline="middle">${initials}</text></svg>`;
 }
+
+
+/**
+ * Sync the UI profile role from trusted Firebase custom claims.
+ * This controls the UI only; backend/database rules must enforce access.
+ */
+async function syncFirebaseRole(firebaseUser, profile) {
+  const { getIdTokenResult } = await getFirebaseAuthModules();
+
+  // Force-refresh the token so newly assigned claims are fetched.
+  const tokenResult = await getIdTokenResult(firebaseUser, true);
+  const claimRole = tokenResult.claims.role;
+
+  const allowedRoles = ['user', 'admin', 'super-admin'];
+  profile.role = allowedRoles.includes(claimRole) ? claimRole : 'user';
+
+  saveState();
+  return profile;
+}
+
 
 // ── Pre-kept Seed Accounts ───────────────────────────────────────────────────
 const SEED = {
@@ -1437,6 +1567,41 @@ function navigateTo(hash) {
 }
 window.addEventListener('hashchange', handleHashRoute);
 
+
+
+(async function restoreFirebaseSession() {
+  try {
+    const { auth, onAuthStateChanged } =
+      await getFirebaseAuthModules();
+
+    onAuthStateChanged(auth, async firebaseUser => {
+      if (!firebaseUser) return;
+
+      try {
+        const { user } = ensureFirebaseProfile(firebaseUser);
+        const previousRole = user.role;
+
+        await syncFirebaseRole(firebaseUser, user);
+
+        if (
+          currentUserId !== user.id ||
+          previousRole !== user.role
+        ) {
+          currentUserId = user.id;
+          saveSelf();
+          render();
+        }
+      } catch (error) {
+        console.error('Could not restore Firebase user:', error);
+      }
+    });
+  } catch (error) {
+    console.error('Firebase initialization failed:', error);
+  }
+})();
+
+
+
 function render() {
   const appEl = document.getElementById('app');
   if (!appEl) return;
@@ -1978,30 +2143,43 @@ function setupResumeDropzone(prefix) {
   });
 }
 
-function handleGoogleDoor() {
-  const mockGoogle = {
-    displayName: 'Alex Rivera',
-    email: 'alex.trainer@gmail.com',
-    photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'
-  };
 
-  // Check if account already exists with complete profile
-  const existing = getUserByEmail(mockGoogle.email);
-  if (existing && existing.phone) {
-    currentUserId = existing.id;
-    currentView = 'groups';
-    saveSelf();
-    saveView();
-    toast(`Welcome back, ${existing.displayName}!`, 'success');
-    render();
-    return;
+async function handleGoogleDoor() {
+  try {
+    const { auth, googleProvider, signInWithPopup } =
+      await getFirebaseAuthModules();
+
+    const result = await signInWithPopup(auth, googleProvider);
+    firebaseGoogleUser = result.user;
+
+    const existing = findFirebaseProfile(firebaseGoogleUser);
+
+    if (existing && existing.phone) {
+      const { user } = ensureFirebaseProfile(firebaseGoogleUser);
+      await syncFirebaseRole(firebaseGoogleUser, user);
+      currentUserId = user.id;
+      currentView = 'groups';
+      saveSelf();
+      saveView();
+      toast(`Welcome back, ${user.displayName}!`, 'success');
+      render();
+      return;
+    }
+
+    googleSignupProfile = {
+      name: firebaseGoogleUser.displayName || '',
+      email: firebaseGoogleUser.email || '',
+      photo: firebaseGoogleUser.photoURL || ''
+    };
+
+    authScreen = 'google_complete';
+    renderAuthScreen();
+  } catch (error) {
+    console.error('Google sign-in failed:', error);
+    showMsg('auth-msg', escHtml(friendlyFirebaseAuthError(error)));
   }
-
-  // Google does not supply phone number -> ask only for missing fields
-  googleSignupProfile = mockGoogle;
-  authScreen = 'google_complete';
-  renderAuthScreen();
 }
+
 
 function attachAuthEvents() {
   document.getElementById('si-toggle')?.addEventListener('click', () => {
@@ -2125,276 +2303,305 @@ function setLoading(btn, loading, defaultText) {
   btn.innerHTML = loading ? `<span class="spinner"></span> Loading…` : defaultText;
 }
 
+
 async function doSignIn() {
   const email = document.getElementById('si-email')?.value.trim();
-  const pass  = document.getElementById('si-pass')?.value;
-  if (!email) { showMsg('auth-msg', 'Email is required'); return; }
-  if (!validateEmail(email)) { showMsg('auth-msg', 'Enter a valid email address'); return; }
-  if (!pass) { showMsg('auth-msg', 'Password is required'); return; }
+  const pass = document.getElementById('si-pass')?.value;
 
-  const btn = document.getElementById('si-btn');
-  setLoading(btn, true, 'Sign in');
-  await fakeDelay(350);
-
-  const user = getUserByEmail(email);
-  if (!user || user.passwordHash !== pass) {
-    showMsg('auth-msg', 'Incorrect email or password');
-    setLoading(btn, false, 'Sign in');
-    return;
-  }
-
-  currentUserId = user.id;
-  saveSelf();
-  setLoading(btn, false, 'Sign in');
-
-  if (isSuperAdmin(user)) {
-    staffSubTab = 'overview';
-  } else {
-    currentView = 'groups';
-    saveView();
-  }
-
-  render();
-}
-
-async function doSignUp() {
-  const name  = document.getElementById('su-name')?.value.trim();
-  const email = document.getElementById('su-email')?.value.trim();
-  const phone = document.getElementById('su-phone')?.value.trim();
-  const pass  = document.getElementById('su-pass')?.value || '';
-
-  if (!name) {
-    showMsg('auth-msg', 'Full name is required');
-    shakeSheet();
-    document.getElementById('su-name')?.focus();
-    return;
-  }
   if (!email) {
-    showMsg('auth-msg', 'Email address is required');
-    shakeSheet();
-    document.getElementById('su-email')?.focus();
+    showMsg('auth-msg', 'Email is required');
     return;
   }
   if (!validateEmail(email)) {
-    showMsg('auth-msg', 'Please enter a valid email address');
-    shakeSheet();
-    document.getElementById('su-email')?.focus();
-    return;
-  }
-  if (!phone) {
-    showMsg('auth-msg', 'Mobile number is required');
-    shakeSheet();
-    document.getElementById('su-phone')?.focus();
-    return;
-  }
-  if (!isValidIndianPhone(phone)) {
-    showMsg('auth-msg', 'Please enter a valid 10-digit Indian mobile number');
-    shakeSheet();
-    document.getElementById('su-phone')?.focus();
+    showMsg('auth-msg', 'Enter a valid email address');
     return;
   }
   if (!pass) {
     showMsg('auth-msg', 'Password is required');
-    shakeSheet();
-    document.getElementById('su-pass')?.focus();
     return;
   }
 
-  const evalPw = evaluatePassword(pass);
-  if (!evalPw.len || !evalPw.letter || !evalPw.number) {
+  const btn = document.getElementById('si-btn');
+  setLoading(btn, true, 'Sign in');
+
+  try {
+    const { auth, signInWithEmailAndPassword } =
+      await getFirebaseAuthModules();
+
+const result = await signInWithEmailAndPassword(auth, email, pass);
+
+if (!result.user.emailVerified) {
+  pendingVerificationEmail = result.user.email || email;
+  authScreen = 'verify_email';
+  startResendTimer();
+  renderAuthScreen();
+  return;
+}
+
+const { user } = ensureFirebaseProfile(result.user);
+await syncFirebaseRole(result.user, user);
+
+currentUserId = user.id;
+currentView = 'groups';
+saveSelf();
+saveView();
+
+if (isSuperAdmin(user)) staffSubTab = 'overview';
+
+render();
+  } catch (error) {
+    console.error('Email sign-in failed:', error);
+    showMsg('auth-msg', escHtml(friendlyFirebaseAuthError(error)));
+  } finally {
+    setLoading(btn, false, 'Sign in');
+  }
+}
+
+
+
+async function doSignUp() {
+  const name = document.getElementById('su-name')?.value.trim();
+  const email = document.getElementById('su-email')?.value.trim();
+  const phone = document.getElementById('su-phone')?.value.trim();
+  const pass = document.getElementById('su-pass')?.value || '';
+
+  if (!name) {
+    showMsg('auth-msg', 'Full name is required');
+    return;
+  }
+  if (!email || !validateEmail(email)) {
+    showMsg('auth-msg', 'Please enter a valid email address');
+    return;
+  }
+  if (!phone || !isValidIndianPhone(phone)) {
+    showMsg('auth-msg', 'Please enter a valid 10-digit Indian mobile number');
+    return;
+  }
+
+  const passwordCheck = evaluatePassword(pass);
+  if (!passwordCheck.len || !passwordCheck.letter || !passwordCheck.number) {
     showMsg('auth-msg', 'Please meet all password requirements');
-    shakeSheet();
-    document.getElementById('su-pass')?.focus();
-    return;
-  }
-
-  // Duplicate email check
-  const existingUser = getUserByEmail(email);
-  if (existingUser) {
-    const msgEl = document.getElementById('auth-msg');
-    if (msgEl) {
-      msgEl.innerHTML = `
-        <div class="auth-error" style="display:flex; flex-direction:column; gap:6px;">
-          <span>Looks like you already have an account with <strong>${escHtml(email)}</strong>.</span>
-          <a href="#" id="err-signin-link" style="color:inherit; font-weight:700; text-decoration:underline;">Sign in instead &rarr;</a>
-        </div>
-      `;
-      document.getElementById('err-signin-link')?.addEventListener('click', e => {
-        e.preventDefault();
-        prefillSignInEmail = email;
-        authScreen = 'signin';
-        renderAuthScreen();
-      });
-    }
-    shakeSheet();
     return;
   }
 
   const btn = document.getElementById('su-btn');
   setLoading(btn, true, 'Create account');
-  await fakeDelay(450);
 
-  const newUser = {
-    id: uid(),
-    handle: 'user-' + Math.floor(1000 + Math.random() * 9000),
-    displayName: name,
-    email: email.toLowerCase(),
-    passwordHash: pass,
-    authProvider: 'password',
-    phone: normalizeIndianPhone(phone),
-    coins: COIN_NEW_USER,
-    verified: false,
-    role: 'user',
-    photo: null,
-    createdAt: Date.now()
-  };
+  try {
+    const {
+      auth,
+      createUserWithEmailAndPassword,
+      updateProfile,
+      sendEmailVerification
+    } = await getFirebaseAuthModules();
 
-  STATE.users.push(newUser);
-  if (signupResumeFile) {
-    if (!STATE.driveFiles) STATE.driveFiles = [];
-    STATE.driveFiles.push({
-      id: uid(),
-      ownerId: newUser.id,
-      name: signupResumeFile.name,
-      size: signupResumeFile.size,
-      createdAt: Date.now(),
-      hidden: false
+    const result = await createUserWithEmailAndPassword(
+      auth,
+      email.toLowerCase(),
+      pass
+    );
+
+    await updateProfile(result.user, { displayName: name });
+
+    const { user } = ensureFirebaseProfile(result.user, {
+      name,
+      phone: normalizeIndianPhone(phone)
     });
-    signupResumeFile = null;
+    await syncFirebaseRole(result.user, user);
+
+    if (signupResumeFile) {
+      if (!STATE.driveFiles) STATE.driveFiles = [];
+      STATE.driveFiles.push({
+        id: uid(),
+        ownerId: user.id,
+        name: signupResumeFile.name,
+        size: signupResumeFile.size,
+        createdAt: Date.now(),
+        hidden: false
+      });
+      signupResumeFile = null;
+      saveState();
+    }
+
+    await sendEmailVerification(result.user);
+
+    currentUserId = user.id;
+    currentView = 'groups';
+    saveSelf();
+    saveView();
+
+    pendingVerificationEmail = email;
+    startResendTimer();
+    authScreen = 'verify_email';
+    renderAuthScreen();
+  } catch (error) {
+    console.error('Registration failed:', error);
+    showMsg('auth-msg', escHtml(friendlyFirebaseAuthError(error)));
+  } finally {
+    setLoading(btn, false, 'Create account');
   }
-  if (!STATE.ledger) STATE.ledger = [];
-  STATE.ledger.push({
-    id: uid(),
-    userId: newUser.id,
-    type: 'bonus',
-    amount: COIN_NEW_USER,
-    note: 'Welcome bonus',
-    at: Date.now()
-  });
-  saveState();
-
-  // Signed-in user ready to browse
-  currentUserId = newUser.id;
-  currentView = 'groups';
-  saveSelf();
-  saveView();
-
-  setLoading(btn, false, 'Create account');
-
-  // Go to "Check your inbox" screen
-  pendingVerificationEmail = email;
-  startResendTimer();
-  authScreen = 'verify_email';
-  renderAuthScreen();
 }
 
-async function doGoogleFinish() {
-  const name  = document.getElementById('gc-name')?.value.trim();
-  const phone = document.getElementById('gc-phone')?.value.trim();
-  const email = googleSignupProfile?.email || 'alex.trainer@gmail.com';
 
+
+async function doGoogleFinish() {
+  const name = document.getElementById('gc-name')?.value.trim();
+  const phone = document.getElementById('gc-phone')?.value.trim();
+
+  if (!firebaseGoogleUser) {
+    showMsg('auth-msg', 'Please sign in with Google again.');
+    return;
+  }
   if (!name) {
     showMsg('auth-msg', 'Please enter your name');
-    shakeSheet();
     return;
   }
-  if (!phone) {
-    showMsg('auth-msg', 'Please enter your mobile number');
-    shakeSheet();
-    return;
-  }
-  if (!isValidIndianPhone(phone)) {
+  if (!phone || !isValidIndianPhone(phone)) {
     showMsg('auth-msg', 'Please enter a valid 10-digit Indian mobile number');
-    shakeSheet();
     return;
   }
 
   const btn = document.getElementById('gc-finish-btn');
   setLoading(btn, true, 'Finish');
-  await fakeDelay(350);
 
-  let user = getUserByEmail(email);
-  if (!user) {
-    user = {
-      id: uid(),
-      handle: 'user-' + Math.floor(1000 + Math.random() * 9000),
-      displayName: name,
-      email: email.toLowerCase(),
-      passwordHash: null,
-      authProvider: 'google',
+  try {
+    const { auth, updateProfile } = await getFirebaseAuthModules();
+
+    if (auth.currentUser?.uid !== firebaseGoogleUser.uid) {
+      throw new Error('Your Google session expired. Please sign in again.');
+    }
+
+    await updateProfile(firebaseGoogleUser, { displayName: name });
+
+    const { user } = ensureFirebaseProfile(firebaseGoogleUser, {
+      name,
       phone: normalizeIndianPhone(phone),
-      coins: COIN_NEW_USER,
-      verified: true,
-      role: 'user',
-      photo: googleSignupProfile?.photo || null,
-      createdAt: Date.now()
-    };
-    STATE.users.push(user);
-    if (!STATE.ledger) STATE.ledger = [];
-    STATE.ledger.push({
-      id: uid(),
-      userId: user.id,
-      type: 'bonus',
-      amount: COIN_NEW_USER,
-      note: 'Welcome bonus',
-      at: Date.now()
+      photo: firebaseGoogleUser.photoURL || null
     });
-  } else {
-    user.displayName = name;
-    user.phone = normalizeIndianPhone(phone);
-    if (googleSignupProfile?.photo) user.photo = googleSignupProfile.photo;
-  }
+    await syncFirebaseRole(firebaseGoogleUser, user);
 
-  if (signupResumeFile) {
-    if (!STATE.driveFiles) STATE.driveFiles = [];
-    STATE.driveFiles.push({
-      id: uid(),
-      ownerId: user.id,
-      name: signupResumeFile.name,
-      size: signupResumeFile.size,
-      createdAt: Date.now(),
-      hidden: false
-    });
-    signupResumeFile = null;
-  }
+    if (signupResumeFile) {
+      if (!STATE.driveFiles) STATE.driveFiles = [];
+      STATE.driveFiles.push({
+        id: uid(),
+        ownerId: user.id,
+        name: signupResumeFile.name,
+        size: signupResumeFile.size,
+        createdAt: Date.now(),
+        hidden: false
+      });
+      signupResumeFile = null;
+    }
 
-  saveState();
-  currentUserId = user.id;
-  currentView = 'groups';
-  saveSelf();
-  saveView();
-  setLoading(btn, false, 'Finish');
-  toast(`Welcome to HireTrainers, ${name}! 50 coins added to your wallet.`, 'success');
-  render();
+    saveState();
+    currentUserId = user.id;
+    currentView = 'groups';
+    saveSelf();
+    saveView();
+
+    googleSignupProfile = null;
+    toast(`Welcome to HireTrainers, ${user.displayName}!`, 'success');
+    render();
+  } catch (error) {
+    console.error('Google profile completion failed:', error);
+    showMsg('auth-msg', escHtml(friendlyFirebaseAuthError(error)));
+  } finally {
+    setLoading(btn, false, 'Finish');
+  }
 }
+
+
 
 async function doForgot() {
   const email = document.getElementById('fp-email')?.value.trim();
-  if (!email) { showMsg('auth-msg', 'Email is required'); return; }
-  if (!validateEmail(email)) { showMsg('auth-msg', 'Enter a valid email address'); return; }
+
+  if (!email) {
+    showMsg('auth-msg', 'Email is required');
+    return;
+  }
+  if (!validateEmail(email)) {
+    showMsg('auth-msg', 'Enter a valid email address');
+    return;
+  }
 
   const btn = document.getElementById('fp-btn');
   setLoading(btn, true, 'Send reset link');
-  await fakeDelay(400);
-  setLoading(btn, false, 'Send reset link');
-  showMsg('auth-msg', 'If an account exists, a reset link was sent.', 'success');
+
+  try {
+    const { auth, sendPasswordResetEmail } =
+      await getFirebaseAuthModules();
+
+    await sendPasswordResetEmail(auth, email);
+    showMsg(
+      'auth-msg',
+      'If an account exists, a reset link was sent.',
+      'success'
+    );
+  } catch (error) {
+    console.error('Password reset failed:', error);
+    // Use a generic message so the UI does not reveal whether an account exists.
+    showMsg(
+      'auth-msg',
+      'If an account exists, a reset link was sent.',
+      'success'
+    );
+  } finally {
+    setLoading(btn, false, 'Send reset link');
+  }
 }
 
-function doInboxResend() {
+
+
+async function doInboxResend() {
   if (verifyResendSeconds > 0) return;
-  startResendTimer();
-  toast('Verification email resent! Check your inbox.', 'info');
+
+  try {
+    const { auth, sendEmailVerification } =
+      await getFirebaseAuthModules();
+
+    if (!auth.currentUser) {
+      toast('Please sign in again to resend verification.', 'error');
+      return;
+    }
+
+    await sendEmailVerification(auth.currentUser);
+    startResendTimer();
+    toast('Verification email sent. Check your inbox.', 'success');
+  } catch (error) {
+    console.error('Resend verification failed:', error);
+    toast(friendlyFirebaseAuthError(error), 'error');
+  }
 }
 
-function doInboxContinue() {
+async function doInboxContinue() {
   if (verifyResendTimer) {
     clearInterval(verifyResendTimer);
     verifyResendTimer = null;
   }
+
+  try {
+    const { auth } = await getFirebaseAuthModules();
+
+    if (auth.currentUser) {
+      await auth.currentUser.reload();
+
+      const { user } = ensureFirebaseProfile(auth.currentUser);
+      await syncFirebaseRole(auth.currentUser, user);
+      currentUserId = user.id;
+      saveSelf();
+    }
+  } catch (error) {
+    console.error('Unable to refresh authentication session:', error);
+  }
+
   const user = me();
-  toast(`Welcome, ${user ? user.displayName : 'there'}! Explore groups and jobs freely.`, 'success');
+  toast(
+    `Welcome, ${user ? user.displayName : 'there'}! Explore groups and jobs freely.`,
+    'success'
+  );
   render();
 }
+
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2679,17 +2886,32 @@ function renderSuperAdminView() {
 }
 
 
-function doSignOut() {
+
+async function doSignOut() {
+  try {
+    const { auth, signOut } = await getFirebaseAuthModules();
+    await signOut(auth);
+  } catch (error) {
+    console.error('Firebase sign-out failed:', error);
+    toast(friendlyFirebaseAuthError(error), 'error');
+    return;
+  }
+
   currentUserId = null;
+  firebaseGoogleUser = null;
   selectedTrainingId = null;
+  googleSignupProfile = null;
   saveSelf();
+
   authScreen = 'signin';
+
   if (window.location.hash !== '#/auth/signin') {
     navigateTo('#/auth/signin');
   } else {
     render();
   }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // NOTIFICATIONS SLIDEOVER (USER & ADMIN ONLY)
@@ -4588,84 +4810,274 @@ function renderSuperAdminUsersView(mount) {
   });
 }
 
-// 6. Super-Admin Roles: grant or revoke admin or super-admin by email.
-// Rule: The last super-admin cannot be removed: show "You can't remove the last super-admin."
-function renderSuperAdminRolesView(mount) {
-  const users = STATE.users || [];
 
+/**
+ * Super-admin role management using real Firebase Authentication accounts.
+ */
+async function renderSuperAdminRolesView(mount) {
   mount.innerHTML = `
-  <div class="list-pane-title" style="margin-bottom:8px">Roles Management</div>
-  <div class="text-xs text-muted" style="margin-bottom:16px">The last super-admin cannot be removed.</div>
-
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:20px;max-width:440px;margin-bottom:24px">
-    <div class="section-title">Grant or revoke role by email</div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <input class="input" type="email" id="super-role-email-inp" placeholder="User email address…">
-      <select class="input" id="super-role-select">
-        <option value="admin">Admin</option>
-        <option value="super-admin">Super-admin</option>
-        <option value="user">User (Revoke staff role)</option>
-      </select>
-      <button class="btn btn-primary" id="super-apply-role-btn">Update role</button>
+    <div class="list-pane-title" style="margin-bottom:8px">
+      Roles Management
     </div>
-  </div>
+    <p class="text-xs text-muted" style="margin-bottom:16px">
+      Real Firebase accounts. Roles are stored as Firebase custom claims.
+      Disabling an account prevents future sign-ins; it does not delete data.
+    </p>
+    <div style="display:flex;gap:10px;margin-bottom:16px;max-width:700px">
+      <input class="input" id="firebase-account-search"
+        placeholder="Search by email, name, or UID..." style="flex:1">
+      <button class="btn btn-primary" id="firebase-account-refresh">
+        Refresh
+      </button>
+    </div>
+    <div id="firebase-accounts-status" class="text-xs text-muted"
+      style="margin-bottom:12px">Loading Firebase accounts…</div>
+    <div style="background:var(--surface);border:1px solid var(--border);
+      border-radius:var(--radius-card);overflow-x:auto">
+      <table class="admin-table" style="min-width:900px">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>UID</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Last sign-in</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="firebase-accounts-body">
+          <tr><td colspan="6">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `;
 
-  <div class="section-title">Current Staff Accounts</div>
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);overflow-x:auto">
-    <table class="admin-table">
-      <thead><tr><th>Handle</th><th>Email</th><th>Role</th><th style="text-align:right">Action</th></tr></thead>
-      <tbody>
-        ${users.filter(u => u.role === 'admin' || u.role === 'superadmin' || u.role === 'super-admin').map(u => `
-        <tr>
-          <td style="font-weight:700">${escHtml(u.handle)}</td>
-          <td style="color:var(--muted)">${escHtml(u.email)}</td>
-          <td><span class="role-pill ${u.role === 'super-admin' || u.role === 'superadmin' ? 'superadmin' : 'admin'}">${u.role}</span></td>
-          <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn btn-ghost staff-set-role-btn" data-uid="${u.id}" data-role="user" style="font-size:11px;padding:4px 8px">Set user</button>
-            <button class="btn btn-ghost staff-set-role-btn" data-uid="${u.id}" data-role="admin" style="font-size:11px;padding:4px 8px">Set admin</button>
-            <button class="btn btn-ghost staff-set-role-btn" data-uid="${u.id}" data-role="super-admin" style="font-size:11px;padding:4px 8px">Set super-admin</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  </div>`;
+  const status = mount.querySelector('#firebase-accounts-status');
+  const body = mount.querySelector('#firebase-accounts-body');
+  const search = mount.querySelector('#firebase-account-search');
+  const refresh = mount.querySelector('#firebase-account-refresh');
 
-  document.getElementById('super-apply-role-btn')?.addEventListener('click', () => {
-    const email = document.getElementById('super-role-email-inp')?.value.trim().toLowerCase();
-    const newRole = document.getElementById('super-role-select')?.value;
-    if (!email) { toast('Email is required', 'error'); return; }
-    const targetUser = getUserByEmail(email);
-    if (!targetUser) { toast('No user found with that email address', 'error'); return; }
-    applySuperRoleChange(targetUser.id, newRole, () => renderSuperAdminRolesView(mount));
-  });
+  let accounts = [];
+  let currentUid = null;
 
-  mount.querySelectorAll('.staff-set-role-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      applySuperRoleChange(btn.dataset.uid, btn.dataset.role, () => renderSuperAdminRolesView(mount));
-    });
-  });
-}
+  function renderRows() {
+    const query = (search.value || '').trim().toLowerCase();
 
-function applySuperRoleChange(userId, newRole, onDone) {
-  const targetUser = getUser(userId);
-  if (!targetUser) return;
+    const filtered = accounts.filter(account =>
+      [account.email, account.displayName, account.uid]
+        .some(value => (value || '').toLowerCase().includes(query))
+    );
 
-  // Rule: The last super-admin cannot be removed: show "You can't remove the last super-admin."
-  const isTargetSuper = (targetUser.role === 'superadmin' || targetUser.role === 'super-admin');
-  if (isTargetSuper && newRole !== 'super-admin' && newRole !== 'superadmin') {
-    const superCount = (STATE.users || []).filter(u => u.role === 'superadmin' || u.role === 'super-admin').length;
-    if (superCount <= 1) {
-      toast("You can't remove the last super-admin.", 'error');
+    if (!filtered.length) {
+      body.innerHTML = `
+        <tr><td colspan="6" style="padding:20px">
+          No matching Firebase accounts found.
+        </td></tr>`;
       return;
+    }
+
+    body.innerHTML = filtered.map(account => {
+      const isSelf = account.uid === currentUid;
+      const role = ['user', 'admin', 'super-admin'].includes(account.role)
+        ? account.role
+        : 'user';
+
+      const lastSignIn = account.lastSignInTime
+        ? new Date(account.lastSignInTime).toLocaleString()
+        : 'Never';
+
+      return `
+        <tr>
+          <td>
+            <div style="font-weight:700">
+              ${escHtml(account.displayName || 'Unnamed user')}
+            </div>
+            <div class="text-xs text-muted">
+              ${escHtml(account.email || 'No email')}
+            </div>
+          </td>
+          <td>
+            <code style="font-size:11px">${escHtml(account.uid)}</code>
+          </td>
+          <td>
+            <span class="role-pill ${
+              role === 'super-admin' ? 'superadmin' :
+              role === 'admin' ? 'admin' : ''
+            }">${escHtml(role)}</span>
+          </td>
+          <td>
+            <span class="badge ${
+              account.disabled ? 'badge-neutral' : 'badge-green'
+            }">${account.disabled ? 'Disabled' : 'Enabled'}</span>
+          </td>
+          <td style="font-size:12px">${escHtml(lastSignIn)}</td>
+          <td>
+            <div style="display:flex;flex-direction:column;gap:6px;
+              min-width:150px">
+              <select class="input firebase-role-select"
+                data-uid="${escHtml(account.uid)}"
+                ${isSelf ? 'disabled' : ''}>
+                <option value="user" ${role === 'user' ? 'selected' : ''}>
+                  User
+                </option>
+                <option value="admin" ${role === 'admin' ? 'selected' : ''}>
+                  Admin
+                </option>
+                <option value="super-admin"
+                  ${role === 'super-admin' ? 'selected' : ''}>
+                  Super-admin
+                </option>
+              </select>
+              <button class="btn btn-primary firebase-save-role"
+                data-uid="${escHtml(account.uid)}"
+                ${isSelf ? 'disabled' : ''}>Save role</button>
+              <button class="btn btn-ghost firebase-toggle-account"
+                data-uid="${escHtml(account.uid)}"
+                data-disabled="${account.disabled ? 'true' : 'false'}"
+                ${isSelf ? 'disabled' : ''}>
+                ${account.disabled ? 'Re-enable account' : 'Disable account'}
+              </button>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+
+    body.querySelectorAll('.firebase-save-role').forEach(button => {
+      button.addEventListener('click', async () => {
+        const uid = button.dataset.uid;
+        const select = body.querySelector(
+          `.firebase-role-select[data-uid="${CSS.escape(uid)}"]`
+        );
+
+        if (!select) return;
+
+        button.disabled = true;
+
+        try {
+          const { auth } = await getFirebaseAuthModules();
+          const { getFunctions, httpsCallable } = await import(
+            'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js'
+          );
+
+          const functions = getFunctions(auth.app, 'asia-south1');
+          const setUserRole = httpsCallable(functions, 'setUserRole');
+
+          await setUserRole({ uid, role: select.value });
+
+          toast('Firebase role updated successfully.', 'success');
+          await loadAccounts();
+        } catch (error) {
+          console.error('Could not update Firebase role:', error);
+          toast(
+            error?.message || 'Could not update role. Check permissions.',
+            'error'
+          );
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll('.firebase-toggle-account').forEach(button => {
+      button.addEventListener('click', async () => {
+        const uid = button.dataset.uid;
+        const currentlyDisabled = button.dataset.disabled === 'true';
+        const nextDisabled = !currentlyDisabled;
+
+        const confirmed = window.confirm(
+          nextDisabled
+            ? 'Disable this Firebase account? The account will not be deleted.'
+            : 'Re-enable this Firebase account?'
+        );
+
+        if (!confirmed) return;
+
+        button.disabled = true;
+
+        try {
+          const { auth } = await getFirebaseAuthModules();
+          const { getFunctions, httpsCallable } = await import(
+            'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js'
+          );
+
+          const functions = getFunctions(auth.app, 'asia-south1');
+          const setUserDisabled = httpsCallable(
+            functions, 'setUserDisabled'
+          );
+
+          await setUserDisabled({ uid, disabled: nextDisabled });
+
+          toast(
+            nextDisabled ? 'Account disabled.' : 'Account re-enabled.',
+            'success'
+          );
+
+          await loadAccounts();
+        } catch (error) {
+          console.error('Could not update Firebase account:', error);
+          toast(
+            error?.message || 'Could not update account status.',
+            'error'
+          );
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  }
+
+  async function loadAccounts() {
+    status.textContent = 'Loading real Firebase accounts…';
+    refresh.disabled = true;
+
+    try {
+      const { auth } = await getFirebaseAuthModules();
+      const { getFunctions, httpsCallable } = await import(
+        'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js'
+      );
+
+      if (!auth.currentUser) {
+        throw new Error('Please sign in again.');
+      }
+
+      currentUid = auth.currentUser.uid;
+
+      // Refresh the caller's token so newly assigned claims are checked.
+      const token = await auth.currentUser.getIdTokenResult(true);
+
+      if (token.claims.role !== 'super-admin') {
+        throw new Error(
+          'This account is not a Firebase super-admin. ' +
+          'Sign in with the account that has the super-admin claim.'
+        );
+      }
+
+      const functions = getFunctions(auth.app, 'asia-south1');
+      const listAuthUsers = httpsCallable(functions, 'listAuthUsers');
+      const response = await listAuthUsers({});
+
+      accounts = response.data.users || [];
+      status.textContent = `${accounts.length} Firebase account(s) loaded.`;
+      renderRows();
+    } catch (error) {
+      console.error('Could not load Firebase accounts:', error);
+      status.textContent =
+        error?.message || 'Could not load accounts. Check deployment and permissions.';
+      body.innerHTML = `
+        <tr><td colspan="6" style="padding:20px;color:var(--danger)">
+          Firebase account list could not be loaded.
+        </td></tr>`;
+    } finally {
+      refresh.disabled = false;
     }
   }
 
-  targetUser.role = newRole;
-  audit('set_role', `Updated role for ${targetUser.email} to ${newRole}`);
-  saveState();
-  toast(`Role updated to ${newRole}`, 'success');
-  onDone();
+  search.addEventListener('input', renderRows);
+  refresh.addEventListener('click', loadAccounts);
+
+  await loadAccounts();
 }
+
 
 // 7. Super-Admin Coins: grant coins to a user by handle with an amount (1-10000) and a reason.
 // This is the ONLY place coins appear for the super-admin.
