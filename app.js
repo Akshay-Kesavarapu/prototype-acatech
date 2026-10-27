@@ -4,6 +4,44 @@
 /* ── HireTrainers Application ───────────────────────────────────────────────── */
 'use strict';
 
+// ── Server State Synchronizer ────────────────────────────────────────────────
+async function syncStateFromApi() {
+  if (!window.API) return;
+  const user = await API.getCurrentUser();
+  if (user) {
+    currentUserId = user.id;
+    if (!STATE.users) STATE.users = [];
+    const uIdx = STATE.users.findIndex(u => u.id === user.id);
+    if (uIdx !== -1) STATE.users[uIdx] = user;
+    else STATE.users.push(user);
+
+    // Sync wallet
+    const wRes = await API.getWallet(user.id);
+    if (wRes && wRes.ok) {
+      user.coins = wRes.coins;
+      STATE.ledger = wRes.ledger;
+    }
+
+    // Sync enrollments
+    const myL = await API.getMyLearning(user.id);
+    if (!STATE.enrollments) STATE.enrollments = {};
+    for (const item of myL) {
+      if (item.enrollment) {
+        STATE.enrollments[`${item.id}_${user.id}`] = item.enrollment;
+      }
+    }
+  }
+  const [trainings, jobs, groups] = await Promise.all([
+    API.getTrainings(),
+    API.getJobs(),
+    API.getGroups()
+  ]);
+  if (trainings && trainings.length > 0) STATE.trainings = trainings;
+  if (jobs && jobs.length > 0) STATE.jobs = jobs;
+  if (groups && groups.length > 0) STATE.groups = groups;
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATA MODEL SPECIFICATION (for reference and future Flutter implementation)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1070,22 +1108,20 @@ function showBuyCoinsModal() {
   });
 
   document.querySelectorAll('.buy-pack-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.index, 10);
       const pack = packs[idx];
       const user = me();
       if (!user) return;
-      user.coins += pack.coins;
-      if (!STATE.ledger) STATE.ledger = [];
-      STATE.ledger.push({
-        id: uid(),
-        userId: user.id,
-        type: 'purchase',
-        amount: pack.coins,
-        note: `Purchased ${pack.coins} coins (${pack.price})`,
-        at: Date.now()
-      });
-      saveState();
+      if (window.API) {
+        const res = await API.purchaseCoins(user.id, pack.coins);
+        if (res.ok) {
+          user.coins = res.coins;
+          STATE.ledger = res.ledger;
+        }
+      } else {
+        user.coins = (user.coins || 0) + pack.coins;
+      }
       document.querySelector('.modal-overlay')?.remove();
       updateCoinDisplay();
       toast(`Successfully purchased ${pack.coins} coins!`, 'success');
@@ -1213,6 +1249,8 @@ function handleHashRoute() {
     const validViews = ['overview', 'groups', 'jobs', 'trainings', 'audit', 'users', 'roles', 'coins', 'me', 'profile', 'post_training'];
     if (route === 'staff' && param && validViews.includes(param)) {
       staffSubTab = param;
+    } else if ((route === 'me' && param === 'profile') || route === 'profile') {
+      staffSubTab = 'profile';
     } else if (validViews.includes(route)) {
       staffSubTab = route;
       if (route === 'trainings') {
@@ -1246,7 +1284,10 @@ function handleHashRoute() {
       if (param && ['browse', 'applied', 'posted'].includes(param)) {
         jobsSegment = param;
       }
-    } else if (route === 'me' || route === 'profile') {
+    } else if ((route === 'me' && param === 'profile') || route === 'profile') {
+      currentView = 'profile';
+      selectedTrainingId = null;
+    } else if (route === 'me') {
       currentView = 'me';
       selectedTrainingId = null;
     } else if (route === 'groups') {
@@ -1949,13 +1990,31 @@ function attachAuthEvents() {
 
   // Prototype Quick Fill Buttons
   document.getElementById('qa-user')?.addEventListener('click', () => {
-    showMsg('auth-msg', 'Sign-in is not connected yet.');
+    if (window.API && API.isTestMode()) {
+      document.getElementById('si-email').value = 'demo@hiretrainers.app';
+      document.getElementById('si-pass').value = 'demo1234';
+      doSignIn();
+    } else {
+      showMsg('auth-msg', 'Sign-in is not connected yet.');
+    }
   });
   document.getElementById('qa-admin')?.addEventListener('click', () => {
-    showMsg('auth-msg', 'Sign-in is not connected yet.');
+    if (window.API && API.isTestMode()) {
+      document.getElementById('si-email').value = 'admin@hiretrainers.in';
+      document.getElementById('si-pass').value = 'admin';
+      doSignIn();
+    } else {
+      showMsg('auth-msg', 'Sign-in is not connected yet.');
+    }
   });
   document.getElementById('qa-super')?.addEventListener('click', () => {
-    showMsg('auth-msg', 'Sign-in is not connected yet.');
+    if (window.API && API.isTestMode()) {
+      document.getElementById('si-email').value = 'superadmin@hiretrainers.in';
+      document.getElementById('si-pass').value = 'superadmin';
+      doSignIn();
+    } else {
+      showMsg('auth-msg', 'Sign-in is not connected yet.');
+    }
   });
 
   // Google door triggers
@@ -2036,6 +2095,8 @@ async function doSignIn() {
   }
 
   const btn = document.getElementById('si-btn');
+  const email = document.getElementById('si-email')?.value.trim();
+  const pass  = document.getElementById('si-pass')?.value || '';
   setLoading(btn, true, 'Sign in');
 
   try {
@@ -2360,6 +2421,11 @@ function renderUserApp(app) {
       <button class="topbar-btn" id="topbar-theme-toggle" aria-label="Toggle theme">
         ${currentTheme === 'dark' ? ICONS.sun : ICONS.moon}
       </button>
+
+      <!-- Avatar Profile Button -->
+      <button class="topbar-btn topbar-avatar-btn" id="topbar-avatar-btn" aria-label="Profile" title="Profile" style="padding:0; width:34px; height:34px; border-radius:50%; font-size:12px; font-weight:800; border:1px solid var(--border); overflow:hidden; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+        ${user.photo ? `<img src="${user.photo}" alt="Avatar" style="width:100%; height:100%; object-fit:cover;">` : (user.displayName || 'HT').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+      </button>
     </div>
   </header>
 
@@ -2422,6 +2488,9 @@ function renderUserApp(app) {
   document.getElementById('topbar-coin-chip')?.addEventListener('click', showWalletSheet);
   document.getElementById('topbar-bell-btn')?.addEventListener('click', toggleNotificationsSlideover);
   document.getElementById('topbar-theme-toggle')?.addEventListener('click', toggleTheme);
+  document.getElementById('topbar-avatar-btn')?.addEventListener('click', () => {
+    navigateTo('#/me/profile');
+  });
 
   // Attach Rail Nav Events
   app.querySelectorAll('.rail-btn[data-view]').forEach(btn => {
@@ -2456,7 +2525,8 @@ function renderUserAppView() {
     else if (currentView === 'applications') { jobsSegment = 'applied'; renderJobsContainerView(main); }
     else if (currentView === 'trainings')    renderTrainingsOrDetailView(main);
     else if (currentView === 'learning')     renderMyLearningView(main);
-    else if (currentView === 'me' || currentView === 'profile') renderMeView(main);
+    else if (currentView === 'profile')      renderProfileView(main);
+    else if (currentView === 'me')           renderMeView(main);
     else if (currentView === 'drive')        renderDriveView(main);
     else if (currentView === 'staff')        renderAdminStaffView(main);
     else if (currentView === 'chat')         renderChatView(main);
@@ -2495,7 +2565,7 @@ function renderSuperAdminApp(app) {
         ${currentTheme === 'dark' ? ICONS.sun : ICONS.moon}
       </button>
 
-      <span class="role-pill superadmin" style="font-size:12px;padding:3px 10px">Super-admin</span>
+      <button class="role-pill superadmin" id="superadmin-topbar-profile" style="font-size:12px;padding:3px 10px;border:none;cursor:pointer;" title="Staff Profile">Super-admin</button>
 
       <button class="btn btn-ghost" id="superadmin-topbar-signout" style="font-size:12px;padding:5px 12px">Sign out</button>
     </div>
@@ -2557,6 +2627,12 @@ function renderSuperAdminApp(app) {
 
   // Attach Top Bar Events
   document.getElementById('topbar-theme-toggle')?.addEventListener('click', toggleTheme);
+  document.getElementById('topbar-avatar-btn')?.addEventListener('click', () => {
+    navigateTo('#/me/profile');
+  });
+  document.getElementById('superadmin-topbar-profile')?.addEventListener('click', () => {
+    navigateTo('#/me/profile');
+  });
   document.getElementById('superadmin-topbar-signout')?.addEventListener('click', doSignOut);
 
   // Attach Rail Nav Events
@@ -2593,7 +2669,8 @@ function renderSuperAdminView() {
     else if (staffSubTab === 'users')       renderSuperAdminUsersView(main);
     else if (staffSubTab === 'roles')       renderSuperAdminRolesView(main);
     else if (staffSubTab === 'coins')       renderSuperAdminCoinsView(main);
-    else if (staffSubTab === 'me' || staffSubTab === 'profile') renderSuperAdminMeView(main);
+    else if (staffSubTab === 'profile')     renderProfileView(main);
+    else if (staffSubTab === 'me')          renderSuperAdminMeView(main);
     else if (staffSubTab === 'post_training') renderPostTrainingView(main);
     else renderStaffOverviewView(main);
   });
@@ -4881,124 +4958,353 @@ function renderSuperAdminProfileView(mount) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// USER PROFILE SCREEN (FOR NORMAL USERS & ADMIN)
+// PROFILE SCREEN FOR ALL THREE ROLES (USER, ADMIN, SUPER-ADMIN)
 // ═══════════════════════════════════════════════════════════════════════════════
+function maskPhone(phone) {
+  if (!phone) return 'Not provided';
+  const digits = String(phone).replace(/\D/g, '');
+  const clean = (digits.length === 12 && digits.startsWith('91')) ? digits.slice(2) : digits;
+  if (clean.length === 10) {
+    return `+91 ${clean.slice(0, 2)}XXXXXX${clean.slice(8)}`;
+  }
+  return phone;
+}
+
 function renderProfileView(main) {
   const user = me();
-  const myLedger = (STATE.ledger || []).filter(l => l.userId === user.id).sort((a, b) => b.at - a.at).slice(0, 15);
-  const initials = user.displayName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  if (!user) { render(); return; }
 
-  main.innerHTML = `
-  <div class="list-pane" style="flex:1;min-width:0;width:auto;max-width:none;border-right:none;overflow-y:auto">
-    <div class="list-pane-header">
-      <span class="list-pane-title">Profile</span>
-      <span class="reset-link" id="reset-demo-link">Reset demo</span>
-    </div>
-    <div style="padding:20px 24px;max-width:540px">
-      <!-- User Info Card -->
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">
-        <label for="photo-input" style="cursor:pointer" title="Upload avatar">
-          <div class="profile-avatar" id="profile-avatar-display">
-            ${user.photo ? `<img src="${user.photo}" alt="Profile photo">` : `<span>${initials}</span>`}
-          </div>
-        </label>
-        <div>
-          <div class="font-bold" style="font-size:17px">${escHtml(user.displayName)}</div>
-          <div class="text-xs text-muted">${escHtml(user.handle)}</div>
-          <div class="text-xs text-muted">${escHtml(user.email)}</div>
-          ${user.role && user.role !== 'user' ? `<span class="role-pill admin" style="margin-top:4px;display:inline-block">${user.role}</span>` : ''}
-        </div>
-      </div>
-      <input type="file" id="photo-input" class="sr-only" accept="image/*" aria-label="Upload profile photo">
-      <div id="photo-error" class="auth-error hidden" style="margin-bottom:12px"></div>
+  const isSA = isSuperAdmin(user);
+  const initials = (user.displayName || 'HT').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-      <!-- Coin Balance Card -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:18px;margin-bottom:18px;box-shadow:var(--shadow)">
-        <div class="section-title">Coins</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-size:28px;font-weight:800;color:var(--coin-fg)">${user.coins}</span>
-          <span class="text-muted text-sm">coins available</span>
-          <button class="btn btn-primary" id="profile-buy-coins-btn" style="margin-left:auto;font-size:12px;padding:6px 14px">Buy coins</button>
-        </div>
-      </div>
+  if (isSA) {
+    main.innerHTML = `
+      <div class="profile-view-wrap">
+        <!-- Back Navigation Button -->
+        <button class="training-back-btn" id="profile-back-btn" style="margin-bottom:16px;">
+          ${ICONS.back}
+          <span>Back</span>
+        </button>
 
-      <!-- Full Ledger Card -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:18px;margin-bottom:18px;box-shadow:var(--shadow)">
-        <div class="section-title">Ledger</div>
-        ${myLedger.length === 0
-          ? '<div class="text-sm text-muted">No transactions recorded yet.</div>'
-          : myLedger.map(l => `
-          <div class="ledger-row">
+        <div class="list-pane-title" style="margin-bottom:16px;">Staff Profile</div>
+
+        <div class="profile-card">
+          <div class="profile-avatar-row">
+            <div class="profile-avatar-large">
+              ${user.photo ? `<img src="${user.photo}" alt="Avatar">` : initials}
+            </div>
             <div>
-              <div class="text-sm" style="font-weight:600">${escHtml(l.note)}</div>
-              <div class="text-xs text-muted">${new Date(l.at).toLocaleDateString()}</div>
+              <div style="font-size:18px; font-weight:800; color:var(--text);">${escHtml(user.displayName)}</div>
+              <div style="font-size:13px; color:var(--muted); margin-top:2px;">${escHtml(user.email)}</div>
+              <div style="margin-top:6px;">
+                <span class="role-pill superadmin">Super-admin</span>
+              </div>
             </div>
-            <div class="ledger-amount ${l.amount > 0 ? 'credit' : 'debit'}">
-              ${l.amount > 0 ? '+' : ''}${l.amount}
-            </div>
-          </div>`).join('')}
+          </div>
+          <div style="font-size:13px; color:var(--muted); line-height:1.5; border-top:1px solid var(--border); padding-top:12px;">
+            Staff accounts are verified by the owner team.
+          </div>
+        </div>
+
+        <div class="profile-card" style="display:flex; flex-direction:column; gap:10px;">
+          <button class="btn btn-ghost w-full" id="profile-sa-theme-btn" style="display:flex; align-items:center; justify-content:center; gap:8px;">
+            ${currentTheme === 'dark' ? ICONS.sun : ICONS.moon}
+            <span>Switch Theme (${currentTheme === 'dark' ? 'Light mode' : 'Dark mode'})</span>
+          </button>
+          <button class="btn btn-ghost w-full" id="profile-sa-signout-btn" style="color:#EF4444; display:flex; align-items:center; justify-content:center; gap:8px;">
+            ${ICONS.back}
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
+    `;
 
-      <!-- Sign out & Delete -->
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button class="btn btn-ghost w-full" id="signout-btn">Sign out</button>
-        <button class="btn btn-danger w-full" id="delete-acct-btn">Delete account</button>
-      </div>
-    </div>
-  </div>`;
-
-  document.getElementById('reset-demo-link')?.addEventListener('click', resetDemo);
-  document.getElementById('profile-buy-coins-btn')?.addEventListener('click', showBuyCoinsModal);
-
-  document.getElementById('photo-input')?.addEventListener('change', e => {
-    const file = e.target.files?.[0];
-    const err = document.getElementById('photo-error');
-    if (!file) return;
-    if (file.size > PHOTO_MAX_BYTES) {
-      if (err) {
-        err.textContent = 'Profile photo exceeds 300 KB. Please choose a smaller image.';
-        err.classList.remove('hidden');
-      }
-      return;
-    }
-    if (err) err.classList.add('hidden');
-    const r = new FileReader();
-    r.onload = ev => {
-      user.photo = ev.target.result;
-      saveState();
-      toast('Profile photo updated', 'success');
-      renderProfileView(main);
-    };
-    r.readAsDataURL(file);
-  });
-
-  document.getElementById('signout-btn')?.addEventListener('click', doSignOut);
-
-  document.getElementById('delete-acct-btn')?.addEventListener('click', () => {
-    showModal({
-      title: 'Delete account',
-      body: 'Are you sure you want to delete your account? All your postings, applications, files, and coin balance will be permanently erased.',
-      actions: [
-        {
-          id: 'confirm',
-          label: 'Delete permanently',
-          cls: 'btn-danger',
-          fn: () => {
-            STATE.users = (STATE.users || []).filter(u => u.id !== user.id);
-            STATE.jobs = (STATE.jobs || []).filter(j => j.posterId !== user.id);
-            STATE.applications = (STATE.applications || []).filter(a => a.applicantId !== user.id);
-            STATE.driveFiles = (STATE.driveFiles || []).filter(f => f.ownerId !== user.id);
-            currentUserId = null;
-            saveSelf();
-            saveState();
-            toast('Account deleted', 'primary');
-            render();
-          }
-        },
-        { id: 'cancel', label: 'Cancel', cls: 'btn-ghost' }
-      ]
+    document.getElementById('profile-back-btn')?.addEventListener('click', () => {
+      staffSubTab = 'me';
+      navigateTo('#/me');
     });
-  });
+    document.getElementById('profile-sa-theme-btn')?.addEventListener('click', toggleTheme);
+    document.getElementById('profile-sa-signout-btn')?.addEventListener('click', doSignOut);
+    return;
+  }
+
+  // Normal User or Admin
+  const userIsAdmin = isAdmin(user);
+  const enrolCount = (STATE.trainings || []).filter(t => isEnrolled(t.id, user.id)).length;
+  const kycStatus = user.kycStatus || (user.kycVerified ? 'Verified' : 'Not verified');
+  const kycStatusCls = kycStatus === 'Verified' ? 'verified' : kycStatus === 'Pending' ? 'pending' : kycStatus === 'Failed' ? 'failed' : 'not-verified';
+
+  let isEditing = false;
+
+  function renderContent() {
+    main.innerHTML = `
+      <div class="profile-view-wrap">
+        <!-- Back Navigation Button -->
+        <button class="training-back-btn" id="profile-back-btn" style="margin-bottom:16px;">
+          ${ICONS.back}
+          <span>Back</span>
+        </button>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <div class="list-pane-title" style="margin-bottom:0;">Profile</div>
+          ${!isEditing ? `
+            <button class="btn btn-sm btn-ghost" id="profile-edit-btn" style="font-size:12px; font-weight:700;">Edit Profile</button>
+          ` : ''}
+        </div>
+
+        ${isEditing ? `
+          <!-- Edit Profile Form Card -->
+          <div class="profile-card">
+            <div style="font-size:15px; font-weight:800; color:var(--text); margin-bottom:14px;">Edit Profile Information</div>
+            
+            <div style="margin-bottom:14px;">
+              <label style="display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:4px;">Full Name (2-60 chars)</label>
+              <input type="text" id="edit-profile-name" class="input" value="${escHtml(user.displayName)}" maxlength="60" style="width:100%; box-sizing:border-box;">
+              <div id="edit-name-err" style="color:#EF4444; font-size:11px; margin-top:4px; display:none;"></div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <label style="display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:4px;">Mobile Phone (10 digits Indian)</label>
+              <input type="text" id="edit-profile-phone" class="input" value="${escHtml(user.phone || '')}" placeholder="e.g. 9876543210" maxlength="14" style="width:100%; box-sizing:border-box;">
+              <div id="edit-phone-err" style="color:#EF4444; font-size:11px; margin-top:4px; display:none;"></div>
+            </div>
+
+            <div style="margin-bottom:18px;">
+              <label style="display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:4px;">Avatar Image URL (optional)</label>
+              <input type="url" id="edit-profile-photo" class="input" value="${escHtml(user.photo || '')}" placeholder="https://..." style="width:100%; box-sizing:border-box;">
+            </div>
+
+            <div style="display:flex; gap:10px;">
+              <button class="btn btn-primary" id="save-profile-btn" style="flex:1;">Save changes</button>
+              <button class="btn btn-ghost" id="cancel-edit-profile-btn" style="flex:1;">Cancel</button>
+            </div>
+          </div>
+        ` : `
+          <!-- Normal View Cards -->
+          <div class="profile-card">
+            <div class="profile-avatar-row">
+              <div class="profile-avatar-large">
+                ${user.photo ? `<img src="${user.photo}" alt="Avatar">` : initials}
+              </div>
+              <div style="flex:1; min-width:0;">
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <span style="font-size:18px; font-weight:800; color:var(--text);">${escHtml(user.displayName)}</span>
+                  ${userIsAdmin ? `<span class="role-pill admin">Admin</span>` : `<span class="role-pill user">User</span>`}
+                </div>
+                <div style="font-size:13px; color:var(--muted); margin-top:2px;">${escHtml(user.email)}</div>
+                <div style="font-size:12px; color:var(--text); margin-top:4px; font-weight:600;">Phone: ${escHtml(maskPhone(user.phone))}</div>
+
+                ${userIsAdmin ? `
+                  <button class="btn btn-ghost" id="profile-staff-btn" style="margin-top:10px; font-size:12px; color:var(--primary); padding:4px 10px; display:inline-flex; align-items:center; gap:6px;">
+                    ${ICONS.shield}
+                    <span>Staff Moderation & Tools</span>
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+
+          <!-- KYC Status Card -->
+          <div class="profile-card" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div>
+              <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;">KYC Identity Status</div>
+              <div style="margin-top:4px;">
+                <span class="badge-kyc-status ${kycStatusCls}">${escHtml(kycStatus)}</span>
+              </div>
+            </div>
+            ${kycStatus === 'Not verified' ? `
+              <button class="btn btn-sm btn-primary" id="profile-verify-kyc-btn" style="padding:6px 14px; font-size:12px;">Verify now</button>
+            ` : ''}
+          </div>
+
+          <!-- Coins Balance Card -->
+          <div class="profile-card" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div>
+              <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;">Wallet Balance</div>
+              <div style="font-size:22px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:6px; margin-top:2px;">
+                ${ICONS.coin}
+                <span>${user.coins || 0} Coins</span>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="profile-buy-coins-btn" style="padding:6px 14px; font-size:12px;">Buy coins</button>
+          </div>
+
+          <!-- My Enrolments Card -->
+          <div class="profile-card" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div>
+              <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase;">My Enrolments</div>
+              <div style="font-size:16px; font-weight:800; color:var(--text); margin-top:2px;">
+                ${enrolCount} course${enrolCount === 1 ? '' : 's'} enrolled
+              </div>
+            </div>
+            <button class="btn btn-ghost" id="profile-view-learning-btn" style="padding:6px 12px; font-size:12px;">View Learning</button>
+          </div>
+
+          <!-- Settings & Actions Card -->
+          <div class="profile-card" style="display:flex; flex-direction:column; gap:10px;">
+            <button class="btn btn-ghost w-full" id="profile-theme-toggle-btn" style="display:flex; align-items:center; justify-content:center; gap:8px;">
+              ${currentTheme === 'dark' ? ICONS.sun : ICONS.moon}
+              <span>Switch Theme (${currentTheme === 'dark' ? 'Light mode' : 'Dark mode'})</span>
+            </button>
+            <button class="btn btn-ghost w-full" id="profile-signout-btn" style="color:var(--text); display:flex; align-items:center; justify-content:center; gap:8px;">
+              ${ICONS.back}
+              <span>Sign Out</span>
+            </button>
+          </div>
+
+          <!-- Danger Zone Card -->
+          <div class="danger-zone-card">
+            <div style="font-size:14px; font-weight:800; color:#EF4444; margin-bottom:4px;">Danger Zone</div>
+            <div style="font-size:12px; color:var(--muted); margin-bottom:12px; line-height:1.4;">
+              Permanently delete your account. Postings, applications, uploaded files, and coin balance will be erased.
+            </div>
+            <button class="btn btn-danger" id="profile-delete-acct-btn" style="font-size:13px; padding:8px 16px;">Delete account</button>
+          </div>
+        `}
+      </div>
+    `;
+
+    // Attach listeners
+    document.getElementById('profile-back-btn')?.addEventListener('click', () => {
+      currentView = 'me';
+      navigateTo('#/me');
+    });
+
+    document.getElementById('profile-edit-btn')?.addEventListener('click', () => {
+      isEditing = true;
+      renderContent();
+    });
+
+    document.getElementById('cancel-edit-profile-btn')?.addEventListener('click', () => {
+      isEditing = false;
+      renderContent();
+    });
+
+    document.getElementById('save-profile-btn')?.addEventListener('click', async () => {
+      const nameInp = document.getElementById('edit-profile-name');
+      const phoneInp = document.getElementById('edit-profile-phone');
+      const photoInp = document.getElementById('edit-profile-photo');
+      const nameErr = document.getElementById('edit-name-err');
+      const phoneErr = document.getElementById('edit-phone-err');
+
+      if (nameErr) nameErr.style.display = 'none';
+      if (phoneErr) phoneErr.style.display = 'none';
+
+      const cleanName = (nameInp?.value || '').trim();
+      const phoneVal = (phoneInp?.value || '').replace(/\D/g, '');
+      const cleanPhone = (phoneVal.length === 12 && phoneVal.startsWith('91')) ? phoneVal.slice(2) : phoneVal;
+      const cleanPhoto = (photoInp?.value || '').trim();
+
+      let hasErr = false;
+      if (cleanName.length < 2 || cleanName.length > 60) {
+        if (nameErr) {
+          nameErr.textContent = 'Name must be between 2 and 60 characters.';
+          nameErr.style.display = 'block';
+        }
+        hasErr = true;
+      }
+
+      if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+        if (phoneErr) {
+          phoneErr.textContent = 'Please enter a valid 10-digit Indian mobile number (starts with 6-9).';
+          phoneErr.style.display = 'block';
+        }
+        hasErr = true;
+      }
+
+      if (hasErr) return;
+
+      const saveBtn = document.getElementById('save-profile-btn');
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+      }
+
+      const res = await API.updateProfile(user.id, {
+        displayName: cleanName,
+        phone: cleanPhone,
+        photo: cleanPhoto || null
+      });
+
+      if (res && res.ok) {
+        user.displayName = res.user.displayName;
+        user.phone = res.user.phone;
+        user.photo = res.user.photo;
+        const stateUser = (STATE.users || []).find(u => u.id === user.id);
+        if (stateUser) {
+          stateUser.displayName = res.user.displayName;
+          stateUser.phone = res.user.phone;
+          stateUser.photo = res.user.photo;
+        }
+        saveState();
+        toast('Profile updated successfully', 'success');
+        isEditing = false;
+        renderContent();
+      } else {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save changes';
+        }
+        if (nameErr) {
+          nameErr.textContent = res?.error || 'Failed to update profile.';
+          nameErr.style.display = 'block';
+        }
+      }
+    });
+
+    document.getElementById('profile-staff-btn')?.addEventListener('click', () => {
+      currentView = 'staff';
+      navigateTo('#/staff');
+    });
+
+    document.getElementById('profile-verify-kyc-btn')?.addEventListener('click', () => {
+      showKycEnrollSheet('t1');
+    });
+
+    document.getElementById('profile-buy-coins-btn')?.addEventListener('click', showBuyCoinsModal);
+
+    document.getElementById('profile-view-learning-btn')?.addEventListener('click', () => {
+      currentView = 'learning';
+      navigateTo('#/learning');
+    });
+
+    document.getElementById('profile-theme-toggle-btn')?.addEventListener('click', toggleTheme);
+
+    document.getElementById('profile-signout-btn')?.addEventListener('click', doSignOut);
+
+    document.getElementById('profile-delete-acct-btn')?.addEventListener('click', () => {
+      showModal({
+        title: 'Delete account',
+        message: 'Are you sure you want to permanently delete your account? All your postings, applications, files, and coin balance will be erased. This cannot be undone.',
+        buttons: [
+          {
+            id: 'confirm_del_acct',
+            label: 'Delete permanently',
+            cls: 'btn-danger',
+            onClick: async () => {
+              const res = await API.deleteAccount(user.id);
+              if (res && res.ok) {
+                STATE.users = (STATE.users || []).filter(u => u.id !== user.id);
+                STATE.jobs = (STATE.jobs || []).filter(j => j.posterId !== user.id);
+                STATE.applications = (STATE.applications || []).filter(a => a.applicantId !== user.id);
+                STATE.driveFiles = (STATE.driveFiles || []).filter(f => f.ownerId !== user.id);
+                currentUserId = null;
+                saveSelf();
+                saveState();
+                toast('Account deleted', 'info');
+                render();
+              } else {
+                toast(res?.error || 'Failed to delete account', 'error');
+              }
+            }
+          },
+          { id: 'cancel', label: 'Cancel', cls: 'btn-ghost' }
+        ]
+      });
+    });
+  }
+
+  renderContent();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5034,9 +5340,17 @@ function renderKycView(main) {
   document.getElementById('kyc-submit-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('kyc-submit-btn');
     setLoading(btn, true, 'Complete verification');
-    await fakeDelay(500);
-    user.verified = true;
-    saveState();
+    if (window.API) {
+      const res = await API.verifyKyc(user.id, { docType: document.getElementById('kyc-id')?.value || 'Aadhaar' });
+      if (res.ok) {
+        user.verified = true;
+        user.kycVerified = true;
+      }
+    } else {
+      await fakeDelay(500);
+      user.verified = true;
+      user.kycVerified = true;
+    }
     setLoading(btn, false, 'Complete verification');
     toast('Account verified successfully!', 'success');
     currentView = 'groups';
@@ -5047,10 +5361,23 @@ function renderKycView(main) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP
 // ═══════════════════════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   loadState();
-  render();
+  if (window.API) {
+    if (API.isTestMode()) {
+      const currentUser = await API.getCurrentUser();
+      if (!currentUser) {
+        await API.switchTestUser('user');
+      }
+      await syncStateFromApi();
+    }
+  }
+  if (window.location.hash) {
+    handleHashRoute();
+  } else {
+    render();
+  }
 });
 
 
@@ -5202,11 +5529,40 @@ function renderTrainingsView(main) {
     render();
   });
 
+  activeRefreshTrainingsGrid = renderTrainingsCardsOnly;
+
   function renderTrainingsCardsOnly() {
     const mount = document.getElementById('trainings-grid-mount');
     if (!mount) return;
 
-    if (allTrainings.length === 0) {
+    let list = (STATE.trainings || []).filter(t => {
+      if (userIsStaff) return true; // staff sees published, draft, and hidden
+      return t.status === 'published';
+    });
+
+    if (trainingsFilter === 'upcoming') {
+      const now = Date.now();
+      list = list.filter(t => {
+        const next = getNextUpcomingSession(t);
+        return next && (next.endAt || next.startAt + 2 * 3600000) > now;
+      });
+    } else if (trainingsFilter === 'free') {
+      list = list.filter(t => t.priceInr === 0);
+    } else if (trainingsFilter === 'enrolled') {
+      list = list.filter(t => isEnrolled(t.id, user.id));
+    }
+
+    if (trainingsSearch.trim()) {
+      const q = trainingsSearch.trim().toLowerCase();
+      list = list.filter(t => {
+        const matchTitle = (t.title || '').toLowerCase().includes(q);
+        const matchTrainer = (t.trainer?.name || '').toLowerCase().includes(q);
+        const matchSkills = (t.trainer?.skills || []).some(s => s.toLowerCase().includes(q));
+        return matchTitle || matchTrainer || matchSkills;
+      });
+    }
+
+    if (list.length === 0) {
       mount.innerHTML = `
         <div style="text-align:center; padding:60px 20px; color:var(--muted);">
           <div style="font-size:36px; margin-bottom:12px;">🎓</div>
@@ -5225,7 +5581,7 @@ function renderTrainingsView(main) {
 
     mount.innerHTML = `
       <div class="trainings-grid">
-        ${allTrainings.map(t => renderTrainingCardHTML(t, user)).join('')}
+        ${list.map(t => renderTrainingCardHTML(t, user)).join('')}
       </div>
     `;
 
@@ -5257,6 +5613,105 @@ function renderTrainingsView(main) {
   renderTrainingsCardsOnly();
 }
 
+let activeRefreshTrainingsGrid = null;
+let currentActiveTrainingMenu = null;
+
+function closeTrainingCardMenu() {
+  if (!currentActiveTrainingMenu) return;
+  const { el, backdrop, triggerEl, onScroll, onKeyDown, onPointerDown } = currentActiveTrainingMenu;
+  if (triggerEl) triggerEl.setAttribute('aria-expanded', 'false');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+  if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+  window.removeEventListener('scroll', onScroll, true);
+  window.removeEventListener('keydown', onKeyDown, true);
+  document.removeEventListener('pointerdown', onPointerDown, true);
+  currentActiveTrainingMenu = null;
+}
+
+function showLearnerPreviewModal(training) {
+  const priceDisplay = training.priceInr === 0 ? '<span class="training-price-free">Free</span>' : '₹' + training.priceInr.toLocaleString('en-IN');
+  const skills = training.trainer?.skills || [];
+  
+  showModal({
+    title: 'Learner Preview Mode',
+    message: `<div style="text-align:left;">
+      <div style="background:rgba(22, 163, 74, 0.1); border:1px solid rgba(22, 163, 74, 0.3); border-radius:10px; padding:8px 12px; margin-bottom:14px; font-size:12px; color:#16A34A; font-weight:700;">
+        Viewing training as a regular learner (staff controls hidden)
+      </div>
+      <div style="font-size:16px; font-weight:800; color:var(--text); margin-bottom:4px;">${escHtml(training.title)}</div>
+      <div style="font-size:13px; font-weight:600; color:var(--primary); margin-bottom:4px;">${escHtml(training.trainer?.name || 'Instructor')} · ${escHtml(training.trainer?.role || 'Lead Trainer')}</div>
+      <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">${escHtml(training.trainer?.company || 'Industry Expert')} · ${escHtml(training.trainer?.years || '5+')} Yrs Exp</div>
+      <div style="font-size:12px; color:var(--text); line-height:1.5; margin-bottom:12px;">${escHtml(training.trainer?.bio || training.summary || '')}</div>
+      <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:14px;">
+        ${skills.map(s => `<span class="training-skill-chip">${escHtml(s)}</span>`).join('')}
+      </div>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:var(--surface2); border:1px solid var(--border); border-radius:10px;">
+        <span style="font-size:18px; font-weight:800; color:var(--text);">${priceDisplay}</span>
+        <button class="btn btn-green" style="padding:6px 16px; font-size:13px;" onclick="toast('Enrollment action simulated in preview mode', 'info')">Enroll</button>
+      </div>
+    </div>`,
+    buttons: [
+      { id: 'close', label: 'Close Preview', cls: 'btn-primary' }
+    ]
+  });
+}
+
+function showTypeDeleteModal(training, onConfirm) {
+  const count = training.enrolledCount || 0;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-backdrop';
+  overlay.style.zIndex = '999999';
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:440px; padding:24px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <div style="color:#EF4444; font-size:20px;">⚠️</div>
+        <div style="font-size:18px; font-weight:800; color:var(--text);">Delete Training</div>
+      </div>
+      <div style="background:rgba(239, 68, 68, 0.1); border:1px solid rgba(239, 68, 68, 0.25); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; font-weight:700; color:#EF4444;">
+        ${count} learner${count === 1 ? ' is' : 's are'} enrolled in this training.
+      </div>
+      <div style="font-size:13px; color:var(--text); line-height:1.5; margin-bottom:14px;">
+        Deleting <strong>${escHtml(training.title)}</strong> cannot be undone.<br><br>
+        To confirm deletion, please type <strong>DELETE</strong> below:
+      </div>
+      <input type="text" id="type-delete-input" class="input" placeholder="Type DELETE" style="margin-bottom:16px; width:100%; box-sizing:border-box;">
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button class="btn btn-ghost" id="type-delete-cancel">Cancel</button>
+        <button class="btn btn-danger" id="type-delete-confirm" disabled style="opacity:0.5; cursor:not-allowed;">Delete Training</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const inp = overlay.querySelector('#type-delete-input');
+  const confirmBtn = overlay.querySelector('#type-delete-confirm');
+  const cancelBtn = overlay.querySelector('#type-delete-cancel');
+
+  inp?.focus();
+  inp?.addEventListener('input', () => {
+    if (inp.value.trim() === 'DELETE') {
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+      confirmBtn.style.cursor = 'pointer';
+    } else {
+      confirmBtn.disabled = true;
+      confirmBtn.style.opacity = '0.5';
+      confirmBtn.style.cursor = 'not-allowed';
+    }
+  });
+
+  cancelBtn?.addEventListener('click', () => {
+    overlay.remove();
+  });
+
+  confirmBtn?.addEventListener('click', async () => {
+    if (inp?.value.trim() === 'DELETE') {
+      overlay.remove();
+      await onConfirm();
+    }
+  });
+}
+
 function renderTrainingCardHTML(t, user) {
   const userIsStaff = isAdmin(user) || isSuperAdmin(user);
   const enrolled = isEnrolled(t.id, user.id);
@@ -5266,22 +5721,16 @@ function renderTrainingCardHTML(t, user) {
   const nextSession = getNextUpcomingSession(t);
   const dateStr = nextSession ? formatISTDate(nextSession.startAt) : 'Schedule TBA';
 
-  // Trainer initials for placeholder tile
   const initials = ((t.trainer?.name || 'HT').split(' ').map(n => n[0]).join('').slice(0, 2)).toUpperCase();
-
-  // Skills: max 6, overflow
   const skills = t.trainer?.skills || [];
   const displaySkills = skills.slice(0, 6);
   const overflowCount = skills.length - 6;
-
-  // Price formatting
   const priceDisplay = t.priceInr === 0 ? '<span class="training-price-free">Free</span>' : '₹' + t.priceInr.toLocaleString('en-IN');
-
   const hasPhoto = Boolean(t.trainer?.photoUrl && !t.trainer.photoUrl.startsWith('data:image/svg+xml'));
 
   return `
     <div class="training-card ${t.status === 'hidden' ? 'is-hidden' : ''}" data-id="${t.id}">
-      <!-- 1. Photo Container (4:5 Aspect Ratio) with grey tile placeholder -->
+      <!-- 1. Photo Container with grey tile placeholder -->
       <div class="training-photo-wrap">
         ${hasPhoto ? `
           <img class="training-photo-img" src="${escHtml(t.trainer.photoUrl)}" alt="${escHtml(t.trainer?.name || 'Trainer')}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
@@ -5298,8 +5747,8 @@ function renderTrainingCardHTML(t, user) {
           </div>
 
           ${userIsStaff ? `
-            <button class="card-menu-btn" data-id="${t.id}" aria-label="Manage training">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px; height:14px; flex-shrink:0;"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+            <button class="card-menu-btn" data-id="${t.id}" aria-label="Training options" aria-haspopup="menu" aria-expanded="false" title="Training options">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px; height:18px; flex-shrink:0;"><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg>
             </button>
           ` : ''}
         </div>
@@ -5359,71 +5808,307 @@ function renderTrainingCardHTML(t, user) {
   `;
 }
 
-// ── 4. TRAINING ACTION MENU FOR ADMINS (Edit, Hide, Delete) ───────────────────
+// ── 4. TRAINING ACTION MENU (POPOVER FOR DESKTOP, BOTTOM SHEET FOR MOBILE) ───
 function showTrainingActionMenu(tid, triggerEl) {
+  closeTrainingCardMenu();
+
+  const user = me();
+  if (!user || (!isAdmin(user) && !isSuperAdmin(user))) {
+    toast('Not allowed: Staff privileges required.', 'error');
+    return;
+  }
+
   const training = (STATE.trainings || []).find(t => t.id === tid);
   if (!training) return;
 
-  const isHidden = training.status === 'hidden';
+  if (triggerEl) triggerEl.setAttribute('aria-expanded', 'true');
 
-  showModal({
-    title: training.title,
-    message: 'Manage this training course. Actions are recorded in the staff audit log.',
-    buttons: [
-      {
-        id: 'edit',
-        label: 'Edit Training',
-        cls: 'btn-primary',
-        onClick: () => {
-          editingTrainingId = tid;
-          currentView = 'post_training';
-          if (isSuperAdmin(me())) staffSubTab = 'post_training';
-          render();
+  const isHidden = training.status === 'hidden';
+  const isMobile = window.innerWidth < 600;
+
+  let menuContainer, backdrop;
+
+  const handleAction = async (action) => {
+    closeTrainingCardMenu();
+    if (action === 'edit') {
+      editingTrainingId = tid;
+      currentView = 'post_training';
+      if (isSuperAdmin(me())) staffSubTab = 'post_training';
+      audit('edit_training', `Opened editor for: ${training.title}`);
+      if (window.API && API.logAudit) API.logAudit('edit_training', `Opened editor for: ${training.title}`);
+      render();
+    } else if (action === 'duplicate') {
+      const res = await API.duplicateTraining(tid);
+      if (res && res.ok) {
+        if (!STATE.trainings.some(t => t.id === res.training.id)) {
+          const idx = STATE.trainings.findIndex(t => t.id === tid);
+          if (idx !== -1) STATE.trainings.splice(idx + 1, 0, res.training);
+          else STATE.trainings.unshift(res.training);
         }
-      },
-      {
-        id: 'toggle_hide',
-        label: isHidden ? 'Unhide (Make Public)' : 'Hide from Learners',
-        cls: 'btn-ghost',
-        onClick: () => {
-          training.status = isHidden ? 'published' : 'hidden';
-          audit(isHidden ? 'unhide_training' : 'hide_training', `${isHidden ? 'Unhid' : 'Hidden'} training: ${training.title}`);
-          saveState();
-          toast(`Training is now ${training.status}`, 'info');
-          render();
-        }
-      },
-      {
-        id: 'delete',
-        label: 'Delete Training',
-        cls: 'btn-danger',
-        onClick: () => {
-          showModal({
-            title: 'Delete Training?',
-            message: `Are you sure you want to delete "${training.title}"? This cannot be undone.`,
-            buttons: [
-              {
-                id: 'confirm_del',
-                label: 'Yes, Delete',
-                cls: 'btn-danger',
-                onClick: () => {
+        saveState();
+        toast('Training duplicated as draft', 'success');
+        if (typeof activeRefreshTrainingsGrid === 'function') activeRefreshTrainingsGrid();
+        else render();
+      } else {
+        toast(res?.error || 'Failed to duplicate training', 'error');
+      }
+    } else if (action === 'hide') {
+      const res = await API.toggleHideTraining(tid);
+      if (res && res.ok) {
+        training.status = res.status;
+        saveState();
+        toast(`Training is now ${res.status}`, 'info');
+        if (typeof activeRefreshTrainingsGrid === 'function') activeRefreshTrainingsGrid();
+        else render();
+      } else {
+        toast(res?.error || 'Action failed', 'error');
+      }
+    } else if (action === 'preview') {
+      audit('preview_training', `Previewed training as learner: ${training.title}`);
+      if (window.API && API.logAudit) API.logAudit('preview_training', `Previewed training as learner: ${training.title}`);
+      showLearnerPreviewModal(training);
+      toast('Previewing as learner', 'info');
+    } else if (action === 'copy') {
+      const link = window.location.origin + window.location.pathname + '#/trainings/' + tid;
+      try {
+        await navigator.clipboard.writeText(link);
+      } catch (e) {
+        const inp = document.createElement('input');
+        inp.value = link;
+        document.body.appendChild(inp);
+        inp.select();
+        document.execCommand('copy');
+        inp.remove();
+      }
+      audit('copy_training_link', `Copied link to training: ${training.title}`);
+      if (window.API && API.logAudit) API.logAudit('copy_training_link', `Copied link to: ${training.title}`);
+      toast('Training link copied to clipboard', 'success');
+    } else if (action === 'enrolled_count') {
+      const res = await API.getEnrolledCount(tid);
+      if (res && res.ok) {
+        showModal({
+          title: 'Enrolled Learners Count',
+          message: `"${res.title}" currently has ${res.count} enrolled learner${res.count === 1 ? '' : 's'}. (Learner personal identities are kept private.)`,
+          buttons: [{ id: 'ok', label: 'Close', cls: 'btn-primary' }]
+        });
+      } else {
+        toast(res?.error || 'Failed to retrieve enrolled count', 'error');
+      }
+    } else if (action === 'delete') {
+      const count = training.enrolledCount || 0;
+      if (count > 0) {
+        showTypeDeleteModal(training, async () => {
+          const res = await API.deleteTraining(tid);
+          if (res && res.ok) {
+            STATE.trainings = (STATE.trainings || []).filter(t => t.id !== tid);
+            if (STATE.privateLinks) delete STATE.privateLinks[tid];
+            saveState();
+            toast('Training deleted successfully', 'success');
+            if (selectedTrainingId === tid) {
+              selectedTrainingId = null;
+              navigateTo('#/trainings');
+            } else if (typeof activeRefreshTrainingsGrid === 'function') {
+              activeRefreshTrainingsGrid();
+            } else {
+              render();
+            }
+          } else {
+            toast(res?.error || 'Failed to delete', 'error');
+          }
+        });
+      } else {
+        showModal({
+          title: 'Delete Training?',
+          message: `Delete this training "${training.title}"? This cannot be undone.`,
+          buttons: [
+            {
+              id: 'confirm_del',
+              label: 'Yes, Delete',
+              cls: 'btn-danger',
+              onClick: async () => {
+                const res = await API.deleteTraining(tid);
+                if (res && res.ok) {
                   STATE.trainings = (STATE.trainings || []).filter(t => t.id !== tid);
                   if (STATE.privateLinks) delete STATE.privateLinks[tid];
-                  audit('delete_training', `Deleted training: ${training.title}`);
                   saveState();
-                  toast('Training deleted', 'success');
-                  if (selectedTrainingId === tid) selectedTrainingId = null;
-                  render();
+                  toast('Training deleted successfully', 'success');
+                  if (selectedTrainingId === tid) {
+                    selectedTrainingId = null;
+                    navigateTo('#/trainings');
+                  } else if (typeof activeRefreshTrainingsGrid === 'function') {
+                    activeRefreshTrainingsGrid();
+                  } else {
+                    render();
+                  }
+                } else {
+                  toast(res?.error || 'Failed to delete', 'error');
                 }
-              },
-              { id: 'cancel', label: 'Cancel', cls: 'btn-ghost' }
-            ]
-          });
-        }
-      },
-      { id: 'close', label: 'Close', cls: 'btn-ghost' }
-    ]
+              }
+            },
+            { id: 'cancel', label: 'Cancel', cls: 'btn-ghost' }
+          ]
+        });
+      }
+    }
+  };
+
+  if (!isMobile) {
+    // Desktop Popover (anchored to button, rendered into document.body above everything)
+    menuContainer = document.createElement('div');
+    menuContainer.className = 'training-menu-popover';
+    menuContainer.setAttribute('role', 'menu');
+    menuContainer.setAttribute('aria-label', 'Training options');
+
+    const rect = triggerEl.getBoundingClientRect();
+    let left = rect.right - 220;
+    let top = rect.bottom + 6;
+    if (left < 10) left = 10;
+    if (left + 230 > window.innerWidth - 10) left = window.innerWidth - 240;
+    if (top + 290 > window.innerHeight) top = Math.max(10, rect.top - 290);
+
+    menuContainer.style.left = `${left}px`;
+    menuContainer.style.top = `${top}px`;
+
+    menuContainer.innerHTML = `
+      <button class="training-menu-item" role="menuitem" data-action="edit" tabindex="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        <span>Edit</span>
+      </button>
+      <button class="training-menu-item" role="menuitem" data-action="duplicate" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span>Duplicate</span>
+      </button>
+      <button class="training-menu-item" role="menuitem" data-action="hide" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>${isHidden ? 'Unhide' : 'Hide'}</span>
+      </button>
+      <button class="training-menu-item" role="menuitem" data-action="preview" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>Preview as learner</span>
+      </button>
+      <button class="training-menu-item" role="menuitem" data-action="copy" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span>Copy link</span>
+      </button>
+      <button class="training-menu-item" role="menuitem" data-action="enrolled_count" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>View enrolled count</span>
+      </button>
+      <div class="training-menu-divider" role="separator"></div>
+      <button class="training-menu-item danger" role="menuitem" data-action="delete" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+        <span>Delete</span>
+      </button>
+    `;
+
+    document.body.appendChild(menuContainer);
+  } else {
+    // Mobile Bottom Sheet (<600px)
+    backdrop = document.createElement('div');
+    backdrop.className = 'training-menu-sheet-backdrop';
+
+    menuContainer = document.createElement('div');
+    menuContainer.className = 'training-menu-sheet';
+    menuContainer.setAttribute('role', 'dialog');
+    menuContainer.setAttribute('aria-modal', 'true');
+    menuContainer.setAttribute('aria-label', training.title);
+
+    menuContainer.innerHTML = `
+      <div class="training-sheet-drag-handle"></div>
+      <div class="training-sheet-title">${escHtml(training.title)}</div>
+      <button class="training-sheet-item" role="menuitem" data-action="edit" tabindex="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        <span>Edit</span>
+      </button>
+      <button class="training-sheet-item" role="menuitem" data-action="duplicate" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span>Duplicate</span>
+      </button>
+      <button class="training-sheet-item" role="menuitem" data-action="hide" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>${isHidden ? 'Unhide' : 'Hide'}</span>
+      </button>
+      <button class="training-sheet-item" role="menuitem" data-action="preview" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>Preview as learner</span>
+      </button>
+      <button class="training-sheet-item" role="menuitem" data-action="copy" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span>Copy link</span>
+      </button>
+      <button class="training-sheet-item" role="menuitem" data-action="enrolled_count" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>View enrolled count</span>
+      </button>
+      <div class="training-menu-divider" role="separator"></div>
+      <button class="training-sheet-item danger" role="menuitem" data-action="delete" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+        <span>Delete</span>
+      </button>
+      <button class="training-sheet-cancel" id="training-sheet-cancel-btn">Cancel</button>
+    `;
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(menuContainer);
+
+    backdrop.addEventListener('click', closeTrainingCardMenu);
+    menuContainer.querySelector('#training-sheet-cancel-btn')?.addEventListener('click', closeTrainingCardMenu);
+  }
+
+  // Attach button action clicks
+  menuContainer.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const action = btn.dataset.action;
+      handleAction(action);
+    });
   });
+
+  // Focus management
+  const items = Array.from(menuContainer.querySelectorAll('[role="menuitem"]'));
+  let focusedIdx = 0;
+  if (items[0]) items[0].focus();
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeTrainingCardMenu();
+      if (triggerEl) triggerEl.focus();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusedIdx = (focusedIdx + 1) % items.length;
+      items[focusedIdx]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusedIdx = (focusedIdx - 1 + items.length) % items.length;
+      items[focusedIdx]?.focus();
+    } else if (e.key === 'Tab') {
+      closeTrainingCardMenu();
+    }
+  };
+
+  const onScroll = () => {
+    closeTrainingCardMenu();
+  };
+
+  const onPointerDown = (e) => {
+    if (menuContainer && !menuContainer.contains(e.target) && triggerEl !== e.target && !triggerEl.contains(e.target)) {
+      closeTrainingCardMenu();
+    }
+  };
+
+  window.addEventListener('scroll', onScroll, true);
+  window.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('pointerdown', onPointerDown, true);
+
+  currentActiveTrainingMenu = {
+    el: menuContainer,
+    backdrop,
+    triggerEl,
+    onScroll,
+    onKeyDown,
+    onPointerDown
+  };
 }
 
 // ── 5. TRAINING DESCRIPTION PAGE ─────────────────────────────────────────────
@@ -5507,10 +6192,10 @@ function renderTrainingDescriptionView(main, tid) {
             <span style="font-size:12px; font-weight:700; color:var(--text);">${training.enrolledCount || 0} Learners Enrolled</span>
             ${training.status === 'hidden' ? '<span class="badge-hidden-card">Hidden</span>' : ''}
           </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-ghost" id="detail-edit-btn" style="font-size:12px; padding:4px 10px;">Edit</button>
-            <button class="btn btn-ghost" id="detail-toggle-hide-btn" style="font-size:12px; padding:4px 10px;">${training.status === 'hidden' ? 'Unhide' : 'Hide'}</button>
-            <button class="btn btn-ghost" id="detail-delete-btn" style="font-size:12px; padding:4px 10px; color:#EF4444;">Delete</button>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button class="card-menu-btn" id="detail-training-menu-btn" data-id="${training.id}" aria-label="Training options" aria-haspopup="menu" aria-expanded="false" title="Training options" style="margin-left:0;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px; height:18px; flex-shrink:0;"><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg>
+            </button>
           </div>
         </div>
       ` : ''}
@@ -5770,44 +6455,9 @@ function renderTrainingDescriptionView(main, tid) {
   });
 
   // Attach staff actions
-  document.getElementById('detail-edit-btn')?.addEventListener('click', () => {
-    editingTrainingId = training.id;
-    currentView = 'post_training';
-    if (isSuperAdmin(user)) staffSubTab = 'post_training';
-    render();
-  });
-
-  document.getElementById('detail-toggle-hide-btn')?.addEventListener('click', () => {
-    const isHidden = training.status === 'hidden';
-    training.status = isHidden ? 'published' : 'hidden';
-    audit(isHidden ? 'unhide_training' : 'hide_training', `${isHidden ? 'Unhid' : 'Hidden'} training: ${training.title}`);
-    saveState();
-    toast(`Training is now ${training.status}`, 'info');
-    render();
-  });
-
-  document.getElementById('detail-delete-btn')?.addEventListener('click', () => {
-    showModal({
-      title: 'Delete Training?',
-      message: `Are you sure you want to delete "${training.title}"?`,
-      buttons: [
-        {
-          id: 'del',
-          label: 'Delete',
-          cls: 'btn-danger',
-          onClick: () => {
-            STATE.trainings = (STATE.trainings || []).filter(t => t.id !== training.id);
-            if (STATE.privateLinks) delete STATE.privateLinks[training.id];
-            audit('delete_training', `Deleted training: ${training.title}`);
-            saveState();
-            selectedTrainingId = null;
-            toast('Training deleted', 'success');
-            navigateTo('#/trainings');
-          }
-        },
-        { id: 'cancel', label: 'Cancel', cls: 'btn-ghost' }
-      ]
-    });
+  document.getElementById('detail-training-menu-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    showTrainingActionMenu(training.id, e.currentTarget);
   });
 
   // Attach Enroll triggers
@@ -5928,8 +6578,16 @@ function showKycEnrollSheet(trainingId) {
 
     const user = me();
     if (user) {
-      user.verified = true;
-      user.kycVerified = true;
+      if (window.API) {
+        const kycRes = await API.verifyKyc(user.id, { docType: 'Aadhaar' });
+        if (kycRes.ok) {
+          user.verified = true;
+          user.kycVerified = true;
+        }
+      } else {
+        user.verified = true;
+        user.kycVerified = true;
+      }
       saveState();
     }
 
@@ -6036,22 +6694,37 @@ function showPaymentEnrollSheet(training) {
   document.getElementById('sim-pay-fail-btn')?.addEventListener('click', () => runPaymentSimulation('fail'));
 }
 
-function completeEnrolmentSuccess(training) {
+async function completeEnrolmentSuccess(training) {
   const user = me();
   if (!user || !training) return;
 
-  const key = training.id + '_' + user.id;
-  if (!STATE.enrollments) STATE.enrollments = {};
-  STATE.enrollments[key] = {
-    status: 'paid',
-    paidAt: Date.now()
-  };
+  if (window.API) {
+    const res = await API.enrollTraining(training.id);
+    if (!res.ok) {
+      toast(res.error || 'Enrolment failed', 'error');
+      if (res.requiresKyc) showKycEnrollSheet(training.id);
+      return;
+    }
+    const key = training.id + '_' + user.id;
+    if (!STATE.enrollments) STATE.enrollments = {};
+    STATE.enrollments[key] = res.enrollment;
+    training.enrolledCount = res.training.enrolledCount;
+    if (!API._currentLinks) API._currentLinks = {};
+    API._currentLinks[training.id] = res.link;
+  } else {
+    const key = training.id + '_' + user.id;
+    if (!STATE.enrollments) STATE.enrollments = {};
+    STATE.enrollments[key] = { status: 'paid', paidAt: Date.now() };
+    training.enrolledCount = (training.enrolledCount || 0) + 1;
+  }
 
-  training.enrolledCount = (training.enrolledCount || 0) + 1;
   saveState();
-
   toast('You are enrolled. Your session link is unlocked.', 'success');
-  render();
+  if (currentView === 'trainings' && selectedTrainingId === training.id) {
+    render();
+  } else {
+    navigateTo(`#/trainings/${training.id}`);
+  }
 }
 
 // ── 7. MY LEARNING TAB ───────────────────────────────────────────────────────
@@ -6257,7 +6930,7 @@ function renderMeView(main) {
     <div class="me-container">
       <!-- User Hero Card -->
       <div class="me-user-hero">
-        <div class="me-avatar-circle">
+        <div class="me-avatar-circle" id="me-hero-avatar-btn" style="cursor:pointer;" title="Edit Profile & Avatar">
           ${user.photo ? `<img src="${user.photo}" alt="Avatar">` : `<span>${initials}</span>`}
         </div>
         <div style="flex:1;">
@@ -6280,6 +6953,7 @@ function renderMeView(main) {
         </div>
       </div>
 
+      ${!isSuperAdmin(user) ? `
       <!-- Quick Nav Sections -->
       <div class="me-nav-card">
         <button class="me-nav-item" id="me-nav-profile">
@@ -6339,6 +7013,14 @@ function renderMeView(main) {
           `).join('')}
         </div>
       </div>
+      ` : `
+      <!-- Super-Admin Settings (No wallet, no coins, no drive) -->
+      <div class="me-nav-card">
+        <div style="padding:16px; font-size:13px; color:var(--muted); line-height:1.5;">
+          Super-Admin account has system-wide governance access. Personal file drive, financial wallet, and coin balances are disabled for this administrative role.
+        </div>
+      </div>
+      `}
 
       <!-- Settings, Demo Reset & Sign Out -->
       <div class="me-nav-card">
@@ -6375,7 +7057,11 @@ function renderMeView(main) {
   });
   document.getElementById('me-nav-profile')?.addEventListener('click', () => {
     currentView = 'profile';
-    navigateTo('#/profile');
+    navigateTo('#/me/profile');
+  });
+  document.getElementById('me-hero-avatar-btn')?.addEventListener('click', () => {
+    currentView = 'profile';
+    navigateTo('#/me/profile');
   });
   document.getElementById('me-nav-drive')?.addEventListener('click', () => {
     currentView = 'drive';
@@ -6397,7 +7083,7 @@ function renderSuperAdminMeView(mount) {
   mount.innerHTML = `
     <div style="padding:24px; max-width:540px; margin:0 auto;">
       <div class="list-pane-title" style="margin-bottom:8px;">Staff Account</div>
-      <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:18px;">
+      <div id="sa-hero-avatar-card" style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:18px; cursor:pointer;" title="Staff Profile Details">
         <div style="font-size:18px; font-weight:800; color:var(--text);">${escHtml(user.displayName)}</div>
         <div style="font-size:12px; color:var(--muted); margin-top:2px;">${escHtml(user.email)} · ${escHtml(user.handle)}</div>
         <div style="margin-top:10px;">
@@ -6408,6 +7094,13 @@ function renderSuperAdminMeView(mount) {
       <!-- Quick moderation access (especially handy on mobile 5-tab bar) -->
       <div class="me-nav-card" style="margin-bottom:14px;">
         <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; padding:10px 16px 4px;">Super-Admin Controls</div>
+        <button class="me-nav-item" id="sa-nav-profile-item">
+          <div class="me-nav-item-left">
+            ${ICONS.user}
+            <span>Staff Profile & Details</span>
+          </div>
+          <span>&rarr;</span>
+        </button>
         <button class="me-nav-item" data-sa-tab="users">
           <div class="me-nav-item-left">
             ${ICONS.user}
@@ -6472,6 +7165,14 @@ function renderSuperAdminMeView(mount) {
     });
   });
 
+  document.getElementById('sa-hero-avatar-card')?.addEventListener('click', () => {
+    staffSubTab = 'profile';
+    navigateTo('#/me/profile');
+  });
+  document.getElementById('sa-nav-profile-item')?.addEventListener('click', () => {
+    staffSubTab = 'profile';
+    navigateTo('#/me/profile');
+  });
   document.getElementById('sa-theme-toggle')?.addEventListener('click', toggleTheme);
   document.getElementById('sa-reset-demo')?.addEventListener('click', resetDemo);
   document.getElementById('sa-signout')?.addEventListener('click', doSignOut);
@@ -7209,54 +7910,249 @@ setInterval(() => {
 }, 60000);
 
 
-// ── Automated Self-Test (Requirement 7) ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPREHENSIVE CONSOLE SELF-TEST RUNNER (window.selfTest)
+// ═══════════════════════════════════════════════════════════════════════════════
 window.selfTest = async function() {
-  console.log('%c[HireTrainers Self-Test] Starting Automated Suite...', 'font-weight:bold; font-size:14px; color:#f59e0b;');
+  console.log('%c🚀 Starting HireTrainers Comprehensive Self-Test Suite...', 'color:#e3a63a; font-weight:bold; font-size:14px;');
+  
   const results = [];
-  const origAuthScreen = authScreen;
+  function assert(title, condition, detail = '') {
+    results.push({ title, pass: Boolean(condition), detail });
+    if (condition) {
+      console.log(`%c[PASS]%c ${title}`, 'color:#16A34A; font-weight:bold;', 'color:inherit;');
+    } else {
+      console.error(`[FAIL] ${title} - ${detail}`);
+    }
+  }
 
-  authScreen = 'signin';
-  renderAuthScreen();
-  await new Promise(r => setTimeout(r, 60));
+  try {
+    API.setTestMode(true);
+    API.resetTestData();
 
-  // Verify auth overlay renders sign-in page cleanly
-  const overlay = document.getElementById('auth-overlay');
-  const hasAuthCard = overlay && overlay.querySelector('.auth-card');
-  results.push({
-    test: 'Sign-in Screen Render',
-    status: hasAuthCard ? 'PASS' : 'FAIL',
-    reason: hasAuthCard ? 'Sign-in card rendered cleanly' : 'Sign-in card missing'
-  });
+    // 1. Verify Production Disconnect by default
+    API.setTestMode(false);
+    const prodSignIn = await API.signIn('demo@hiretrainers.app', 'demo1234');
+    assert('Normal sign-in is disconnected without test harness', !prodSignIn.ok && prodSignIn.error === 'Sign-in is not connected yet.');
+    API.setTestMode(true);
 
-  // Verify no demo users remain in memory
-  const usersCount = (STATE.users || []).length;
-  results.push({
-    test: 'Demo Accounts Removed',
-    status: usersCount === 0 ? 'PASS' : 'FAIL',
-    reason: usersCount === 0 ? 'STATE.users is empty (0 demo accounts)' : `Found ${usersCount} users`
-  });
+    // Screen verification helper
+    function checkCurrentScreen(screenName) {
+      const appEl = document.getElementById('app');
+      const text = appEl ? appEl.innerText.trim() : '';
+      const isBlank = text.length < 20;
+      assert(`Screen [${screenName}] renders non-blank content`, !isBlank, `Text length: ${text.length}`);
 
-  // Verify attempt to sign in shows "Sign-in is not connected yet."
-  await doSignIn();
-  const msgEl = document.getElementById('auth-msg');
-  const hasExpectedMsg = msgEl && msgEl.innerText.includes('Sign-in is not connected yet.');
-  results.push({
-    test: 'Sign-in Disconnected Notice',
-    status: hasExpectedMsg ? 'PASS' : 'FAIL',
-    reason: hasExpectedMsg ? 'Correct notice shown' : 'Notice missing or incorrect'
-  });
+      const svgs = Array.from(document.querySelectorAll('svg'));
+      let oversized = [];
+      for (const svg of svgs) {
+        if (svg.closest('.hero-banner') || svg.classList.contains('brand-logo')) continue;
+        const rect = svg.getBoundingClientRect();
+        if (rect.width > 32.5 || rect.height > 32.5) {
+          oversized.push({ w: Math.round(rect.width), h: Math.round(rect.height), html: svg.outerHTML.slice(0, 50) });
+        }
+      }
+      assert(`Screen [${screenName}] SVGs strictly <= 32px (found ${svgs.length} SVGs)`, oversized.length === 0, JSON.stringify(oversized));
+    }
 
-  // Restore screen
-  authScreen = origAuthScreen;
-  renderAuthScreen();
+    // 2. User Role Checks
+    await API.switchTestUser('user');
+    await syncStateFromApi();
+    assert('Switched to User role', me() && me().role === 'user');
 
-  const passed = results.filter(r => r.status === 'PASS').length;
-  const failed = results.filter(r => r.status === 'FAIL').length;
-  const allPassed = failed === 0;
+    const userViews = [
+      { view: 'groups', hash: '#/groups' },
+      { view: 'jobs', hash: '#/jobs/browse' },
+      { view: 'jobs', hash: '#/jobs/applied', seg: 'applied' },
+      { view: 'jobs', hash: '#/jobs/posted', seg: 'posted' },
+      { view: 'trainings', hash: '#/trainings' },
+      { view: 'learning', hash: '#/learning' },
+      { view: 'me', hash: '#/me' }
+    ];
 
-  console.log('\n========================================');
-  console.log(`%cSelf-Test Complete: ${passed} PASSED, ${failed} FAILED`, allPassed ? 'color:#10b981; font-weight:bold; font-size:13px;' : 'color:#ef4444; font-weight:bold; font-size:13px;');
-  console.log('========================================\n');
+    for (const v of userViews) {
+      window.location.hash = v.hash;
+      handleHashRoute();
+      if (v.seg) jobsSegment = v.seg;
+      render();
+      await fakeDelay(50);
+      checkCurrentScreen(`User:${v.hash}`);
+    }
 
-  return { total: results.length, passed, failed, allPassed, results };
+    // 3. KYC Gating & Enrollment Truth
+    const u = me();
+    assert('User initially unverified', !u.kycVerified && !u.verified);
+    
+    // Attempt enroll in new training before KYC
+    const enrollAttempt = await API.enrollTraining('t2');
+    assert('Unverified user blocked from paid enrollment (server KYC gate)', !enrollAttempt.ok && enrollAttempt.requiresKyc);
+    
+    // Complete KYC
+    const kycRes = await API.verifyKyc(u.id, { docType: 'Aadhaar' });
+    assert('KYC verification succeeds via server API', kycRes.ok && kycRes.user.kycVerified);
+    u.kycVerified = true;
+    u.verified = true;
+
+    // Enroll in t2 after KYC
+    const enrollSuccess = await API.enrollTraining('t2');
+    assert('Verified user successfully enrolls in paid training', enrollSuccess.ok && enrollSuccess.enrollment.status === 'paid');
+
+    // Private link verification
+    const linkRes = await API.getTrainingLink('t2');
+    assert('Private session link unlocked after verified enrollment', linkRes.ok && Boolean(linkRes.link));
+
+    const unenrolledLink = await API.getTrainingLink('t4');
+    assert('Private session link stays locked for unenrolled training', !unenrolledLink.ok);
+
+    // 4. Admin Role Checks
+    await API.switchTestUser('admin');
+    await syncStateFromApi();
+    assert('Switched to Admin role', me() && isAdmin(me()));
+    
+    const adminViews = ['overview', 'groups', 'jobs', 'trainings', 'audit', 'users', 'roles', 'coins'];
+    for (const sub of adminViews) {
+      window.location.hash = `#/staff/${sub}`;
+      handleHashRoute();
+      render();
+      await fakeDelay(50);
+      checkCurrentScreen(`Admin Staff:${sub}`);
+    }
+
+    // 5. Super-Admin Restrictions Enforcement
+    await API.switchTestUser('superadmin');
+    await syncStateFromApi();
+    const sa = me();
+    assert('Switched to Super-Admin role', sa && isSuperAdmin(sa));
+
+    const superViews = ['overview', 'groups', 'jobs', 'trainings', 'audit', 'users', 'roles', 'coins', 'me'];
+    for (const sub of superViews) {
+      window.location.hash = sub === 'me' ? '#/me' : `#/staff/${sub}`;
+      handleHashRoute();
+      render();
+      await fakeDelay(50);
+      checkCurrentScreen(`SuperAdmin:${sub}`);
+
+      assert(`Super-admin has no coin chip on [${sub}]`, !document.getElementById('topbar-coin-chip'));
+      assert(`Super-admin cannot see Enroll button on [${sub}]`, !document.getElementById('sticky-enroll-btn'));
+      assert(`Super-admin cannot see Post a Job button on [${sub}]`, !document.getElementById('post-job-btn'));
+      if (sub === 'me') {
+        assert('Super-admin Me view has no Wallet / Coin balance card', !document.getElementById('me-buy-coins-btn'));
+        assert('Super-admin Me view has no Drive folder button', !document.getElementById('me-nav-drive'));
+      }
+    }
+
+    // 6. Deep Link Direct Routing Check
+    window.location.hash = '#/trainings/t1';
+    handleHashRoute();
+    render();
+    await fakeDelay(80);
+    assert('Deep link #/trainings/t1 resolves to training description', selectedTrainingId === 't1' && document.querySelector('.training-detail-wrap') !== null);
+
+    window.location.hash = '#/trainings';
+    handleHashRoute();
+    render();
+    await fakeDelay(80);
+    assert('Deep link #/trainings resolves to trainings catalog', currentView === 'trainings' && document.querySelector('.trainings-grid') !== null);
+
+    // 7. Training Card "..." Menu & Actions Verification (Part 1)
+    await API.switchTestUser('user');
+    await syncStateFromApi();
+    window.location.hash = '#/trainings';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    assert('Normal user cannot see "..." menu button on training cards', document.querySelectorAll('.card-menu-btn').length === 0);
+
+    const userDupAttempt = await API.duplicateTraining('t1');
+    assert('Server refuses duplicateTraining for normal user', !userDupAttempt.ok && userDupAttempt.error.includes('Not allowed'));
+    const userHideAttempt = await API.toggleHideTraining('t1');
+    assert('Server refuses toggleHideTraining for normal user', !userHideAttempt.ok && userHideAttempt.error.includes('Not allowed'));
+
+    // Admin tests
+    await API.switchTestUser('admin');
+    await syncStateFromApi();
+    window.location.hash = '#/trainings';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    const adminMenuBtns = document.querySelectorAll('.card-menu-btn');
+    assert('Admin can see "..." menu button on training cards', adminMenuBtns.length > 0);
+    assert('Card menu button touch target is at least 44x44px', adminMenuBtns[0].offsetWidth >= 44 && adminMenuBtns[0].offsetHeight >= 44);
+
+    const dupRes = await API.duplicateTraining('t1');
+    assert('Admin can duplicate training to draft', dupRes.ok && dupRes.training.title.startsWith('Copy of ') && dupRes.training.status === 'draft');
+    assert('Duplicate training has 0 enrolments initially', dupRes.training.enrolledCount === 0);
+
+    const countRes = await API.getEnrolledCount('t1');
+    assert('getEnrolledCount returns number only, no learner names', countRes.ok && typeof countRes.count === 'number' && !countRes.learners && !countRes.names);
+
+    const hideRes = await API.toggleHideTraining('t1');
+    assert('Staff can toggle hide/unhide training', hideRes.ok && (hideRes.status === 'hidden' || hideRes.status === 'published'));
+
+    window.location.hash = '#/trainings/t1';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    const detailMenuBtn = document.getElementById('detail-training-menu-btn');
+    assert('Staff sees "..." menu at top of training description page', Boolean(detailMenuBtn));
+    if (detailMenuBtn) {
+      assert('Detail training menu button is at least 44x44px', detailMenuBtn.offsetWidth >= 44 && detailMenuBtn.offsetHeight >= 44);
+    }
+
+    // 8. Profile View Verification for All 3 Roles at route #/me/profile (Part 2)
+    // A. Normal User Profile
+    await API.switchTestUser('user');
+    await syncStateFromApi();
+    window.location.hash = '#/me/profile';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    assert('Route #/me/profile renders for User role', currentView === 'profile');
+    assert('User profile displays masked phone number (+91 98XXXXXX10 format)', document.body.innerText.includes('+91 98XXXXXX10'));
+    assert('User profile displays KYC status badge', Boolean(document.querySelector('.badge-kyc-status')));
+    assert('User profile has Buy coins button', Boolean(document.getElementById('profile-buy-coins-btn')));
+    assert('User profile has My Enrolments count display', document.body.innerText.includes('enrolled'));
+    assert('User profile has Danger Zone and Delete account button', Boolean(document.getElementById('profile-delete-acct-btn')));
+
+    // B. Admin Profile
+    await API.switchTestUser('admin');
+    await syncStateFromApi();
+    window.location.hash = '#/me/profile';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    assert('Route #/me/profile renders for Admin role', currentView === 'profile');
+    assert('Admin profile displays Admin role badge', Boolean(document.querySelector('.role-pill.admin')));
+    assert('Admin profile has Staff Moderation & Tools access entry', Boolean(document.getElementById('profile-staff-btn')));
+
+    // C. Super-Admin Profile
+    await API.switchTestUser('superadmin');
+    await syncStateFromApi();
+    window.location.hash = '#/me/profile';
+    handleHashRoute();
+    render();
+    await fakeDelay(60);
+    assert('Route #/me/profile renders for Super-Admin role', staffSubTab === 'profile');
+    assert('Super-admin profile has no wallet or coin balance card', !document.getElementById('profile-buy-coins-btn'));
+    assert('Super-admin profile has no KYC status badge or verify button', !document.getElementById('profile-verify-kyc-btn'));
+    assert('Super-admin profile displays staff verification explanation line', document.body.innerText.includes('Staff accounts are verified by the owner team.'));
+    assert('Super-admin profile has Super-admin role badge', Boolean(document.querySelector('.role-pill.superadmin')));
+    assert('Super-admin profile has Theme toggle and Sign out', Boolean(document.getElementById('profile-sa-theme-btn')) && Boolean(document.getElementById('profile-sa-signout-btn')));
+
+  } catch(err) {
+    console.error('Test execution exception:', err);
+    assert('Self-test suite ran without runtime exception', false, err.message);
+  }
+
+  // Summary
+  const passed = results.filter(r => r.pass).length;
+  const total = results.length;
+  const allPassed = passed === total;
+
+  console.log('\n======================================================');
+  console.log(`%cHIRETEST RESULTS: ${passed}/${total} PASSED ${allPassed ? '✅' : '❌'}`, `font-size:14px; font-weight:bold; color:${allPassed ? '#16A34A' : '#EF4444'}`);
+  console.table(results);
+  console.log('======================================================\n');
+
+  return { pass: allPassed, passed, total, results };
 };
