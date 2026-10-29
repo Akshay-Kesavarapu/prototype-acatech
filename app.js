@@ -965,23 +965,45 @@ function toast(msg, type = 'accent', duration = 3500) {
 }
 
 // ── Modal System ──────────────────────────────────────────────────────────────
-function showModal({ title, body, actions }) {
+function showModal(opts = {}) {
+  const { title = '', body, message, actions, buttons } = opts;
+  const modalBody = body !== undefined ? body : (message !== undefined ? message : '');
+  const rawActions = Array.isArray(actions) ? actions : (Array.isArray(buttons) ? buttons : []);
+  const safeActions = rawActions.length > 0 ? rawActions.map(a => ({
+    id: a.id || 'btn_' + Math.random().toString(36).slice(2, 7),
+    label: a.label || 'OK',
+    cls: a.cls || 'btn-ghost',
+    disabled: Boolean(a.disabled),
+    fn: a.fn || a.onClick || null
+  })) : [
+    { id: 'close', label: 'Close', cls: 'btn-ghost', disabled: false, fn: null }
+  ];
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  const btns = actions.map(a =>
+  const btns = safeActions.map(a =>
     `<button class="btn ${a.cls || 'btn-ghost'}" data-action="${a.id}" ${a.disabled ? 'disabled' : ''}>${a.label}</button>`
   ).join('');
   overlay.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
     <div class="modal-title">${title}</div>
-    <div class="modal-body">${body}</div>
+    <div class="modal-body">${modalBody}</div>
     <div class="modal-actions">${btns}</div>
   </div>`;
   document.body.appendChild(overlay);
+
   overlay.querySelectorAll('button[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const act = actions.find(a => a.id === btn.dataset.action);
+    btn.addEventListener('click', async () => {
+      const act = safeActions.find(a => a.id === btn.dataset.action);
+      if (act && act.fn) {
+        try {
+          const res = await act.fn();
+          if (res === false) return; // Validation failed, keep modal open
+        } catch (err) {
+          console.error('Modal action error:', err);
+          return;
+        }
+      }
       overlay.remove();
-      if (act && act.fn) act.fn();
     });
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -2095,8 +2117,6 @@ async function doSignIn() {
   }
 
   const btn = document.getElementById('si-btn');
-  const email = document.getElementById('si-email')?.value.trim();
-  const pass  = document.getElementById('si-pass')?.value || '';
   setLoading(btn, true, 'Sign in');
 
   try {
@@ -2661,18 +2681,29 @@ function renderSuperAdminView() {
   if (!main) return;
 
   renderScreenSafely(main, `SuperAdmin:${staffSubTab}`, () => {
-    if (staffSubTab === 'overview')          renderStaffOverviewView(main);
-    else if (staffSubTab === 'groups')      renderStaffGroupsView(main);
-    else if (staffSubTab === 'jobs')        renderStaffJobsView(main);
-    else if (staffSubTab === 'trainings')   renderTrainingsOrDetailView(main);
-    else if (staffSubTab === 'audit')       renderStaffAuditView(main);
-    else if (staffSubTab === 'users')       renderSuperAdminUsersView(main);
-    else if (staffSubTab === 'roles')       renderSuperAdminRolesView(main);
-    else if (staffSubTab === 'coins')       renderSuperAdminCoinsView(main);
-    else if (staffSubTab === 'profile')     renderProfileView(main);
-    else if (staffSubTab === 'me')          renderSuperAdminMeView(main);
-    else if (staffSubTab === 'post_training') renderPostTrainingView(main);
-    else renderStaffOverviewView(main);
+    if (staffSubTab === 'trainings') {
+      renderTrainingsOrDetailView(main);
+      return;
+    }
+    if (staffSubTab === 'post_training') {
+      renderPostTrainingView(main);
+      return;
+    }
+
+    // Wrap all other views in a single flex:1 column container matching admin's layout, preventing squashing
+    main.innerHTML = `<div id="superadmin-content-wrap" class="superadmin-content-wrap"></div>`;
+    const mount = document.getElementById('superadmin-content-wrap');
+
+    if (staffSubTab === 'overview')          renderStaffOverviewView(mount);
+    else if (staffSubTab === 'groups')       renderStaffGroupsView(mount);
+    else if (staffSubTab === 'jobs')         renderStaffJobsView(mount);
+    else if (staffSubTab === 'audit')       renderStaffAuditView(mount);
+    else if (staffSubTab === 'users')       renderSuperAdminUsersView(mount);
+    else if (staffSubTab === 'roles')       renderSuperAdminRolesView(mount);
+    else if (staffSubTab === 'coins')       renderSuperAdminCoinsView(mount);
+    else if (staffSubTab === 'profile')     renderProfileView(mount);
+    else if (staffSubTab === 'me')          renderSuperAdminMeView(mount);
+    else renderStaffOverviewView(mount);
   });
 }
 
@@ -2923,7 +2954,7 @@ function renderNormalGroupFeed(pane, gid) {
   document.getElementById('composer-send-btn')?.addEventListener('click', () => {
     const title = document.getElementById('composer-title')?.value.trim();
     const template = document.getElementById('composer-template')?.value.trim();
-    if (!title) { toast('Job title is required', 'error'); return; }
+    if (!title) { toast('Job title is required', 'error'); return false; }
 
     createJobPost({
       groupId: gid,
@@ -3127,7 +3158,7 @@ function applyToJob(jid, options = {}) {
             );
             if (!selectedFile) {
               toast('A resume is required to apply.', 'error');
-              return;
+              return false;
             }
             if (!hasAvailableSlot(job)) {
               toast('This job is no longer available. Please check again later.', 'error');
@@ -4297,7 +4328,7 @@ function renderStaffGroupsView(mount) {
           fn: () => {
             const name = document.getElementById('new-grp-name')?.value.trim();
             const type = document.getElementById('new-grp-type')?.value;
-            if (!name) { toast('Group name is required', 'error'); return; }
+            if (!name) { toast('Group name is required', 'error'); return false; }
             if (!STATE.groups) STATE.groups = [];
             STATE.groups.push({ id: uid(), name, type });
             audit('create_group', `Created group "${name}" (${type})`);
@@ -4490,8 +4521,7 @@ function staffRemoveJobPrompt(jid, onDone) {
           const reason = document.getElementById('staff-rm-reason-txt')?.value.trim();
           if (!reason) {
             toast('A reason is required to remove a job posting.', 'error');
-            staffRemoveJobPrompt(jid, onDone);
-            return;
+            return false;
           }
           const job = (STATE.jobs || []).find(j => j.id === jid);
           if (!job) return;
@@ -5275,13 +5305,13 @@ function renderProfileView(main) {
     document.getElementById('profile-delete-acct-btn')?.addEventListener('click', () => {
       showModal({
         title: 'Delete account',
-        message: 'Are you sure you want to permanently delete your account? All your postings, applications, files, and coin balance will be erased. This cannot be undone.',
-        buttons: [
+        body: 'Are you sure you want to permanently delete your account? All your postings, applications, files, and coin balance will be erased. This cannot be undone.',
+        actions: [
           {
             id: 'confirm_del_acct',
             label: 'Delete permanently',
             cls: 'btn-danger',
-            onClick: async () => {
+            fn: async () => {
               const res = await API.deleteAccount(user.id);
               if (res && res.ok) {
                 STATE.users = (STATE.users || []).filter(u => u.id !== user.id);
@@ -5634,7 +5664,7 @@ function showLearnerPreviewModal(training) {
   
   showModal({
     title: 'Learner Preview Mode',
-    message: `<div style="text-align:left;">
+    body: `<div style="text-align:left;">
       <div style="background:rgba(22, 163, 74, 0.1); border:1px solid rgba(22, 163, 74, 0.3); border-radius:10px; padding:8px 12px; margin-bottom:14px; font-size:12px; color:#16A34A; font-weight:700;">
         Viewing training as a regular learner (staff controls hidden)
       </div>
@@ -5650,7 +5680,7 @@ function showLearnerPreviewModal(training) {
         <button class="btn btn-green" style="padding:6px 16px; font-size:13px;" onclick="toast('Enrollment action simulated in preview mode', 'info')">Enroll</button>
       </div>
     </div>`,
-    buttons: [
+    actions: [
       { id: 'close', label: 'Close Preview', cls: 'btn-primary' }
     ]
   });
@@ -5888,8 +5918,8 @@ function showTrainingActionMenu(tid, triggerEl) {
       if (res && res.ok) {
         showModal({
           title: 'Enrolled Learners Count',
-          message: `"${res.title}" currently has ${res.count} enrolled learner${res.count === 1 ? '' : 's'}. (Learner personal identities are kept private.)`,
-          buttons: [{ id: 'ok', label: 'Close', cls: 'btn-primary' }]
+          body: `"${res.title}" currently has ${res.count} enrolled learner${res.count === 1 ? '' : 's'}. (Learner personal identities are kept private.)`,
+          actions: [{ id: 'ok', label: 'Close', cls: 'btn-primary' }]
         });
       } else {
         toast(res?.error || 'Failed to retrieve enrolled count', 'error');
@@ -5919,13 +5949,13 @@ function showTrainingActionMenu(tid, triggerEl) {
       } else {
         showModal({
           title: 'Delete Training?',
-          message: `Delete this training "${training.title}"? This cannot be undone.`,
-          buttons: [
+          body: `Delete this training "${training.title}"? This cannot be undone.`,
+          actions: [
             {
               id: 'confirm_del',
               label: 'Yes, Delete',
               cls: 'btn-danger',
-              onClick: async () => {
+              fn: async () => {
                 const res = await API.deleteTraining(tid);
                 if (res && res.ok) {
                   STATE.trainings = (STATE.trainings || []).filter(t => t.id !== tid);
@@ -7599,7 +7629,7 @@ function renderFormMode(mount, user, existing) {
     if (!data) return;
     showModal({
       title: 'Preview: ' + data.payload.title,
-      message: `
+      body: `
         <div style="text-align:left; max-height:360px; overflow-y:auto;">
           <div style="font-weight:700; margin-bottom:4px;">Trainer: ${escHtml(data.payload.trainer.name)} (${escHtml(data.payload.trainer.role)})</div>
           <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">${escHtml(data.payload.summary)}</div>
@@ -7608,7 +7638,7 @@ function renderFormMode(mount, user, existing) {
           <div style="font-size:11px; color:var(--muted);">Session 1: ${data.payload.sessions[0].title} on ${data.payload.sessions[0].date}</div>
         </div>
       `,
-      buttons: [
+      actions: [
         { id: 'ok', label: 'Close Preview', cls: 'btn-primary' }
       ]
     });
